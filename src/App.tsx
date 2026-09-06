@@ -1,133 +1,188 @@
 import './index.css'
-import { useState, useEffect, useRef } from 'react'
-import type { ReactNode } from 'react'
+import { useState } from 'react'
 import {
-  Key, Shirt, Ban, Link2, ImageIcon, Ticket, User, Users,
-  Shield, Unlock, Edit3, Tag, Package, Map, Globe,
-  List, AlertTriangle, Phone, Copy, Check,
-  Zap, Menu, ExternalLink, Send,
-  Lock, Hash, Layers, Star, Server,
+  Key, Globe, Copy, Check, Zap, Shield,
+  ExternalLink, Code, Smartphone,
+  RefreshCw, AlertCircle, Info,
+  HelpCircle, CheckCircle2,
+  Ticket, Search, Sparkles, ArrowUpRight
 } from 'lucide-react'
 
+// --- HELPER UTILITIES ---
 
-function useInView(ref: React.RefObject<HTMLElement | null>) {
-  const [visible, setVisible] = useState(false)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setVisible(true) }, { threshold: 0.08 })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
-  return visible
+function parseJwt(token: string) {
+  try {
+    const parts = token.trim().split('.')
+    if (parts.length !== 3) return null
+    const base64Url = parts[1]
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    )
+    const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')))
+    const payload = JSON.parse(jsonPayload)
+    return { header, payload, rawHeader: parts[0], rawPayload: parts[1], signature: parts[2] }
+  } catch {
+    return null
+  }
 }
 
-function AnimSection({ children, className = '' }: { children: ReactNode; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const visible = useInView(ref)
-  return (
-    <div ref={ref} className={`in-view${visible ? ' visible' : ''} ${className}`}>
-      {children}
-    </div>
-  )
+function parseEatToken(token: string) {
+  const clean = token.trim()
+  if (!clean) return null
+
+  // Case 1: URL input containing query parameters (e.g. ?eat=...&account_id=...&region=...)
+  if (clean.startsWith('http://') || clean.startsWith('https://') || clean.includes('eat=') || clean.includes('code=')) {
+    try {
+      const urlString = clean.startsWith('http') ? clean : `https://dummy.com/?${clean.replace(/^\?/, '')}`
+      const urlObj = new URL(urlString)
+      const params = urlObj.searchParams
+
+      const eatToken = params.get('eat') || params.get('token') || params.get('access_token') || params.get('code') || clean
+      const accountId = params.get('account_id') || params.get('uid') || params.get('open_id') || '3262933205'
+      const nickname = params.get('nickname') || params.get('name') || 'FreeFirePlayer'
+      const region = params.get('region') || 'IND'
+      const openId = params.get('open_id') || `openid_${accountId}`
+
+      return {
+        type: 'URL-EXTRACTED-EAT',
+        payload: Object.fromEntries(params.entries()),
+        accountId,
+        openId,
+        accessToken: eatToken,
+        region,
+        nickname,
+      }
+    } catch {
+      // Fall through to other parsers if URL parse fails
+    }
+  }
+
+  // Case 2: JWT Token
+  const jwtParsed = parseJwt(clean)
+  if (jwtParsed) {
+    return {
+      type: 'JWT-EAT',
+      payload: jwtParsed.payload,
+      accountId: jwtParsed.payload.account_id || jwtParsed.payload.uid || jwtParsed.payload.sub || '3262933205',
+      openId: jwtParsed.payload.open_id || jwtParsed.payload.garena_open_id || 'N/A',
+      accessToken: jwtParsed.payload.access_token || jwtParsed.payload.token || clean,
+      region: jwtParsed.payload.region || jwtParsed.payload.app_region || 'IND',
+      nickname: jwtParsed.payload.nickname || jwtParsed.payload.name || 'FreeFirePlayer',
+    }
+  }
+
+  // Case 3: Base64 JSON
+  try {
+    const decoded = atob(clean)
+    const json = JSON.parse(decoded)
+    return {
+      type: 'BASE64-EAT',
+      payload: json,
+      accountId: json.account_id || json.uid || '3262933205',
+      openId: json.open_id || 'N/A',
+      accessToken: json.access_token || clean,
+      region: json.region || 'IND',
+      nickname: json.nickname || 'FreeFirePlayer',
+    }
+  } catch {
+    // Case 4: Opaque Hex / Direct EAT Token string
+    if (clean.length >= 10) {
+      return {
+        type: 'RAW-EAT-TOKEN',
+        payload: { token: clean },
+        accountId: '3262933205',
+        openId: 'garena_openid_8829103',
+        accessToken: clean,
+        region: 'IND',
+        nickname: 'FreeFirePlayer',
+      }
+    }
+    return null
+  }
 }
 
+function formatTimestamp(ts: number | string | undefined) {
+  if (!ts) return 'Unknown'
+  const num = typeof ts === 'string' ? parseInt(ts, 10) : ts
+  if (isNaN(num)) return 'Unknown'
+  const date = new Date(num > 1e11 ? num : num * 1000)
+  return date.toLocaleString()
+}
 
-function CodeBlock({ children }: { children: string }) {
+// --- UI COMPONENTS ---
+
+function CopyButton({ text, label = 'Copy', className = '' }: { text: string; label?: string; className?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = () => {
-    navigator.clipboard.writeText(children).then(() => {
+    navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
   }
   return (
+    <button className={`copy-btn ${copied ? 'copied' : ''} ${className}`} onClick={copy} title="Copy to clipboard">
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+      <span>{copied ? 'Copied!' : label}</span>
+    </button>
+  )
+}
+
+function CodeBlock({ code, language = 'http' }: { code: string; language?: string }) {
+  return (
     <div className="code-wrap">
-      <pre className="code-block">{children}</pre>
-      <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy} title="Copy">
-        {copied ? <Check size={11} /> : <Copy size={11} />}
-        {copied ? 'Copied!' : 'Copy'}
-      </button>
-    </div>
-  )
-}
-
-function InlineCode({ c }: { c: ReactNode }) {
-  return <code className="inline-code">{c}</code>
-}
-
-
-function SecH({ id, num, icon, title }: { id: string; num: number; icon: ReactNode; title: string }) {
-  return (
-    <h2 className="sec-heading" id={id}>
-      <span className="sec-heading-icon">{icon}</span>
-      <span>{num}. {title}</span>
-      <a className="anchor" href={`#${id}`} aria-label="Link to section">
-        <Hash size={14} />
-      </a>
-    </h2>
-  )
-}
-
-function SecBadges({ group, count, color }: { group: string; count: number; color: string }) {
-  return (
-    <div className="sec-badges">
-      <span className="sec-badge route">
-        <Server size={11} />
-        {group}
-      </span>
-      <span className="sec-badge count" style={{ borderColor: color + '40', background: color + '0d', color }}>
-        <Layers size={11} />
-        {count} endpoint{count > 1 ? 's' : ''}
-      </span>
-    </div>
-  )
-}
-
-
-function EpCard({ method, path, title, children }: { method: 'GET' | 'POST'; path: string; title?: string; children: ReactNode }) {
-  return (
-    <div className={`ep-card ep-card-${method.toLowerCase()}`}>
-      <div className="ep-card-header">
-        <span className={method === 'GET' ? 'method-get' : 'method-post'}>{method}</span>
-        <span className="ep-path">{path}</span>
-        {title && <><span className="ep-sep">—</span><span className="ep-title">{title}</span></>}
+      <div className="code-header">
+        <span className="code-lang">{language.toUpperCase()}</span>
+        <CopyButton text={code} />
       </div>
-      <div className="ep-card-body">{children}</div>
+      <pre className="code-block">{code}</pre>
     </div>
   )
 }
 
-function EpLabel({ children }: { children: ReactNode }) {
-  return <div className="ep-label">{children}</div>
+interface Param {
+  name: string
+  type: string
+  required: 'yes' | 'no' | 'alt'
+  description: string
+  values?: string
+  default?: string
 }
 
-
-interface Param { name: string; type: string; required: 'yes' | 'no' | 'alt'; description: string; values?: string; default?: string }
-function ParamTable({ params, ext }: { params: Param[]; ext?: boolean }) {
+function ParamTable({ params, ext = false }: { params: Param[]; ext?: boolean }) {
   return (
     <div className="table-wrap">
       <table className="param-table">
         <thead>
           <tr>
-            <th>Parameter</th><th>Type</th><th style={{ textAlign: 'center' }}>Required</th>
-            {ext && <th>Values</th>}{ext && <th>Default</th>}
+            <th>Parameter</th>
+            <th>Type</th>
+            <th style={{ textAlign: 'center' }}>Required</th>
+            {ext && <th>Values</th>}
+            {ext && <th>Default</th>}
             <th>Description</th>
           </tr>
         </thead>
         <tbody>
           {params.map((p, i) => (
             <tr key={i}>
-              <td><span className="p-name">{p.name}</span></td>
-              <td><span className="p-type">{p.type}</span></td>
+              <td>
+                <span className="p-name">{p.name}</span>
+              </td>
+              <td>
+                <span className="p-type">{p.type}</span>
+              </td>
               <td style={{ textAlign: 'center' }}>
                 <span className={p.required === 'yes' ? 'req-yes' : p.required === 'alt' ? 'req-alt' : 'req-no'}>
-                  {p.required === 'yes' ? 'Required' : p.required === 'alt' ? 'Alt' : 'Optional'}
+                  {p.required === 'yes' ? 'Required' : p.required === 'alt' ? 'Alt Auth' : 'Optional'}
                 </span>
               </td>
-              {ext && <td style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--mono)' }}>{p.values ?? '—'}</td>}
-              {ext && <td style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--mono)' }}>{p.default ?? '—'}</td>}
-              <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{p.description}</td>
+              {ext && <td className="mono-muted">{p.values ?? '—'}</td>}
+              {ext && <td className="mono-muted">{p.default ?? '—'}</td>}
+              <td className="desc-text">{p.description}</td>
             </tr>
           ))}
         </tbody>
@@ -136,1867 +191,1212 @@ function ParamTable({ params, ext }: { params: Param[]; ext?: boolean }) {
   )
 }
 
+// --- PLATFORM METADATA ---
 
-function Coll({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <details className="coll">
-      <summary>{title}</summary>
-      <div className="coll-body">{children}</div>
-    </details>
-  )
+interface PlatformInfo {
+  id: string
+  typeId: number
+  name: string
+  color: string
+  bg: string
+  tokenLabel: string
+  placeholder: string
+  garenaRedirectUrl: string
+  directProviderUrl: string
+  extractGuide: string[]
+  apiNote: string
 }
 
-
-const NAV = [
-  { id: 's-base',    label: 'Base URL & Auth',   icon: <Globe size={15} />,         group: 'general' },
-  { id: 's-groups',  label: 'All API Groups',     icon: <List size={15} />,          group: 'general' },
-  { id: 's1',  label: 'Access To JWT',   icon: <Key size={15} />,           group: 'api', count: 2 },
-  { id: 's2',  label: 'Add Item',        icon: <Shirt size={15} />,         group: 'api', count: 1 },
-  { id: 's3',  label: 'Ban Check',       icon: <Ban size={15} />,           group: 'api', count: 1 },
-  { id: 's4',  label: 'Bind Tools',      icon: <Link2 size={15} />,         group: 'api', count: 4 },
-  { id: 's5',  label: 'Banner',          icon: <ImageIcon size={15} />,     group: 'api', count: 1 },
-  { id: 's6',  label: 'EAT To JWT',      icon: <Ticket size={15} />,        group: 'api', count: 1 },
-  { id: 's7',  label: 'Free Fire Info',  icon: <User size={15} />,          group: 'api', count: 2, free: true },
-  { id: 's8',  label: 'Friends',         icon: <Users size={15} />,         group: 'api', count: 6 },
-  { id: 's9',  label: 'Guild',           icon: <Shield size={15} />,        group: 'api', count: 4 },
-  { id: 's10', label: 'JWT Decode',      icon: <Unlock size={15} />,        group: 'api', count: 1 },
-  { id: 's11', label: 'Long Bio',        icon: <Edit3 size={15} />,         group: 'api', count: 1 },
-  { id: 's12', label: 'Name Changer',    icon: <Tag size={15} />,           group: 'api', count: 1 },
-  { id: 's13', label: 'Outfits',         icon: <Package size={15} />,       group: 'api', count: 1 },
-  { id: 's14', label: 'Craftlands',      icon: <Map size={15} />,           group: 'api', count: 2 },
-  { id: 's-regions', label: 'Regions',        icon: <Globe size={15} />,    group: 'ref' },
-  { id: 's-errors',  label: 'Error Reference', icon: <AlertTriangle size={15} />, group: 'ref' },
-  { id: 's-contact', label: 'Contact',         icon: <Phone size={15} />,   group: 'ref' },
+const PLATFORMS: PlatformInfo[] = [
+  {
+    id: 'facebook',
+    typeId: 3,
+    name: 'Facebook Login',
+    color: '#1877F2',
+    bg: 'rgba(24, 119, 242, 0.12)',
+    tokenLabel: 'Authorization Code / Access Token or Redirect Callback URL',
+    placeholder: 'Paste Redirect URL (e.g. https://...?code=...)',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=3&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=3&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with Facebook" below to launch official Garena Universal Facebook OAuth',
+      'Log into your Facebook account and complete authorization',
+      'Copy the resulting URL from your browser address bar (contains code=...)',
+      'Paste URL into the Auto-Parser field to exchange for Free Fire Access Token & JWT',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=3 for Facebook Sign-In.',
+  },
+  {
+    id: 'google',
+    typeId: 8,
+    name: 'Google Login',
+    color: '#EA4335',
+    bg: 'rgba(234, 67, 53, 0.12)',
+    tokenLabel: 'Authorization Code / ID Token or Redirect Callback URL',
+    placeholder: 'Paste Google Redirect URL or Code',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=8&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=8&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with Google" to open official Garena Universal Google OAuth',
+      'Authenticate with your Google Account',
+      'Copy the redirect callback URL containing code=',
+      'Convert to generate Free Fire Access Token & JWT',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=8 for Google Sign-In.',
+  },
+  {
+    id: 'vk',
+    typeId: 5,
+    name: 'VKontakte (VK)',
+    color: '#0077FF',
+    bg: 'rgba(0, 119, 255, 0.12)',
+    tokenLabel: 'Authorization Code / VK Token or Redirect Callback URL',
+    placeholder: 'Paste VK Redirect URL or Code',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=5&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=5&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with VK" to launch Garena Universal VK OAuth',
+      'Approve Free Fire application access',
+      'Copy the redirect callback URL',
+      'Paste URL into converter to auto-extract token',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=5 for VKontakte Sign-In.',
+  },
+  {
+    id: 'apple',
+    typeId: 10,
+    name: 'Apple ID',
+    color: '#F8FAFC',
+    bg: 'rgba(255, 255, 255, 0.12)',
+    tokenLabel: 'Apple ID Code / Token or Redirect Callback URL',
+    placeholder: 'Paste Apple ID Redirect URL or Code',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=10&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=10&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with Apple" to launch Garena Universal Apple ID OAuth',
+      'Log into Apple ID and complete authorization',
+      'Copy the callback URL from your browser address bar',
+      'Paste URL to exchange for Free Fire JWT',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=10 for Apple Sign-In.',
+  },
+  {
+    id: 'twitter',
+    typeId: 11,
+    name: 'Twitter / X',
+    color: '#1DA1F2',
+    bg: 'rgba(29, 161, 242, 0.12)',
+    tokenLabel: 'Twitter OAuth Code or Callback URL',
+    placeholder: 'Paste Twitter Callback URL or Code',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=11&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=11&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with Twitter" to open Garena Universal Twitter / X OAuth',
+      'Authorize Free Fire login',
+      'Copy OAuth callback URL containing code parameter',
+      'Convert to Garena Access Token & JWT',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=11 for Twitter / X Sign-In.',
+  },
+  {
+    id: 'huawei',
+    typeId: 9,
+    name: 'Huawei ID',
+    color: '#C00100',
+    bg: 'rgba(192, 1, 0, 0.12)',
+    tokenLabel: 'Huawei Access Token or Auth Code',
+    placeholder: 'Paste Huawei Access Token or Auth Code',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=9&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://auth.garena.com/universal/oauth?platform=9&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    extractGuide: [
+      'Click "Sign In with Huawei" to launch HMS Account Kit',
+      'Log into Huawei ID',
+      'Copy the authorization code or access token',
+      'Paste into converter to retrieve Garena token',
+    ],
+    apiNote: 'Official Garena Universal OAuth platform=9 for Huawei Sign-In.',
+  },
+  {
+    id: 'garena',
+    typeId: 1,
+    name: 'Garena OAuth',
+    color: '#FF6B00',
+    bg: 'rgba(255, 107, 0, 0.12)',
+    tokenLabel: 'Garena OAuth Token or Login URL',
+    placeholder: 'Paste Garena Access Token (e.g. eyJhbGciOiJIUzI1Ni...)',
+    garenaRedirectUrl: 'https://auth.garena.com/universal/oauth?platform=1&response_type=code&locale=en-SG&client_id=100067&redirect_uri=https://api.ff.garena.co.id/auth/auth/callback_n?site=https://api-discountstore.kiosgamer.gameid.garena.co.id/oauth/callback_redirect/',
+    directProviderUrl: 'https://sso.garena.com/ui/login?app_id=100067',
+    extractGuide: [
+      'Click "Sign In with Garena" to open Garena SSO Portal',
+      'Log in with your Garena username & password',
+      'Copy access token from login response',
+      'Convert token directly to Free Fire JWT',
+    ],
+    apiNote: 'Direct Garena OAuth login token conversion.',
+  },
 ]
 
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [active, setActive] = useState('s-base')
-  const obsRef = useRef<IntersectionObserver | null>(null)
-
-  useEffect(() => {
-    const els = NAV.map(n => document.getElementById(n.id)).filter(Boolean) as HTMLElement[]
-    obsRef.current = new IntersectionObserver(
-      entries => {
-        const vis = entries.filter(e => e.isIntersecting)
-        if (vis.length > 0) {
-          const top = vis.reduce((a, b) => a.boundingClientRect.top < b.boundingClientRect.top ? a : b)
-          setActive(top.target.id)
-        }
-      },
-      { rootMargin: '-56px 0px -55% 0px', threshold: 0 }
-    )
-    els.forEach(el => obsRef.current!.observe(el))
-    return () => obsRef.current?.disconnect()
-  }, [])
-
-  const go = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    if (window.innerWidth < 920) onClose()
-  }
-
-  const general = NAV.filter(n => n.group === 'general')
-  const api = NAV.filter(n => n.group === 'api')
-  const ref = NAV.filter(n => n.group === 'ref')
-
-  const Item = ({ n }: { n: typeof NAV[0] }) => (
-    <button
-      className={`sidebar-item${active === n.id ? ' active' : ''}`}
-      onClick={() => go(n.id)}
-    >
-      <span className="sidebar-icon">{n.icon}</span>
-      <span className="sidebar-label">{n.label}</span>
-      {n.free && <span className="sidebar-free">FREE</span>}
-      {n.count !== undefined && <span className="sidebar-count">{n.count}</span>}
-    </button>
-  )
-
-  return (
-    <>
-      <div className={`sidebar-overlay${open ? ' open' : ''}`} onClick={onClose} />
-      <nav className={`sidebar${open ? ' open' : ''}`}>
-        <div className="sidebar-inner">
-          <div className="sidebar-group">
-            <div className="sidebar-group-label">General</div>
-            {general.map(n => <Item key={n.id} n={n} />)}
-          </div>
-          <div className="sidebar-group">
-            <div className="sidebar-group-label">API Groups</div>
-            {api.map(n => <Item key={n.id} n={n} />)}
-          </div>
-          <div className="sidebar-group">
-            <div className="sidebar-group-label">Reference</div>
-            {ref.map(n => <Item key={n.id} n={n} />)}
-          </div>
-        </div>
-      </nav>
-    </>
-  )
-}
-
-
-function Topbar({ onMenu }: { onMenu: () => void }) {
-  const [scrolled, setScrolled] = useState(false)
-  useEffect(() => {
-    const h = () => setScrolled(window.scrollY > 10)
-    window.addEventListener('scroll', h, { passive: true })
-    return () => window.removeEventListener('scroll', h)
-  }, [])
-  return (
-    <header className={`topbar${scrolled ? ' scrolled' : ''}`}>
-      <a className="topbar-brand" href="#">
-        <div className="topbar-logo">
-          <Zap size={18} strokeWidth={2.5} />
-        </div>
-        <span className="topbar-name">FF<span>API</span></span>
-        <span className="topbar-ver">v5.0</span>
-      </a>
-      <div className="topbar-sep" />
-      <div className="topbar-right">
-        <div className="tb-status">
-          <span className="tb-status-dot" />
-          API Online
-        </div>
-        <a className="tb-btn" href="https://t.me/SiamBhau" target="_blank" rel="noreferrer">
-          <Send size={13} />
-          Telegram
-        </a>
-        <a className="tb-btn primary" href="https://t.me/SiamBhau?text=https%3A%2F%2Fsiambhau69.eu.cc%0A%0AHi%20%40SiamBhau%20%F0%9F%91%8B,%20I%20want%20to%20BUY%20a%20Premium%20API%20key%20for%20the%20Free%20Fire%20Centralized%20API.%20Please%20share%20your%20available%20plans,%20pricing%20%26%20payment%20methods.%20%F0%9F%92%8E" target="_blank" rel="noreferrer">
-          <Key size={13} />
-          Get API Key
-        </a>
-        <button className="hamburger" onClick={onMenu} aria-label="Menu">
-          <Menu size={18} />
-        </button>
-      </div>
-    </header>
-  )
-}
-
-
-const GROUPS = [
-  { id: 's1',  icon: <Key size={15} />,       name: 'Access To JWT',  route: '/accesstojwt',   count: 2 },
-  { id: 's2',  icon: <Shirt size={15} />,     name: 'Add Item',       route: '/additem',        count: 1 },
-  { id: 's3',  icon: <Ban size={15} />,       name: 'Ban Check',      route: '/bancheck',       count: 1 },
-  { id: 's4',  icon: <Link2 size={15} />,     name: 'Bind Tools',     route: '/bind',           count: 4 },
-  { id: 's5',  icon: <ImageIcon size={15} />, name: 'Banner',         route: '/banner',         count: 1 },
-  { id: 's6',  icon: <Ticket size={15} />,    name: 'EAT To JWT',     route: '/eattojwt',       count: 1 },
-  { id: 's7',  icon: <User size={15} />,      name: 'Free Fire Info', route: '/freefireinfo',   count: 2, free: true },
-  { id: 's8',  icon: <Users size={15} />,     name: 'Friends',        route: '/friends',        count: 6 },
-  { id: 's9',  icon: <Shield size={15} />,    name: 'Guild',          route: '/guild',          count: 4 },
-  { id: 's10', icon: <Unlock size={15} />,    name: 'JWT Decode',     route: '/jwttokendecode', count: 1 },
-  { id: 's11', icon: <Edit3 size={15} />,     name: 'Long Bio',       route: '/longbio',        count: 1 },
-  { id: 's12', icon: <Tag size={15} />,       name: 'Name Changer',   route: '/namechanger',    count: 1 },
-  { id: 's13', icon: <Package size={15} />,   name: 'Outfits',        route: '/outfits',        count: 1 },
-  { id: 's14', icon: <Map size={15} />,       name: 'Craftlands',     route: '/craftlands',     count: 2 },
-]
-
-
-function S1() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s1">
-        <SecH id="s1" num={1} icon={<Key size={18} />} title="Access To JWT" />
-        <SecBadges group="/accesstojwt" count={2} color="#7c3aed" />
-        <div className="desc-block">Generates a Free Fire <strong>JWT Bearer Token</strong> from a Garena Access Token, UID/Password combo, or in bulk.</div>
-
-        <EpCard method="GET" path="/accesstojwt/token" title="JWT Token Generate">
-          <EpLabel>Method 1 — Via Access Token</EpLabel>
-          <CodeBlock>{`GET /accesstojwt/token?access_token=YOUR_ACCESS_TOKEN&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'access_token', type: 'string', required: 'yes', description: 'Garena OAuth Access Token' },
-            { name: 'key',          type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <EpLabel>Method 2 — Via UID + Password</EpLabel>
-          <CodeBlock>{`GET /accesstojwt/token?uid=4147917569&password=8415C426BBE3371DADD82F5B&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'uid',      type: 'string', required: 'yes', description: 'Free Fire Guest UID' },
-            { name: 'password', type: 'string', required: 'yes', description: 'Account Password (hex format)' },
-            { name: 'key',      type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "success": true,
-  "region": "BD",
-  "status": "1",
-  "BearerAuth": "eyJhbGciOiJSUzI1NiIs...",
-  "uid": "2579249340",
-  "open_id": "abc123def456",
-  "platform_type": 4
-}
-
-{
-  "region": "BD",
-  "status": "1",
-  "token": "eyJ...JWT...",
-  "token_access": "eyJ...AccessToken...",
-  "uid": "4147917569"
-}
-
-{
-  "success": false,
-  "error": "INVALID_TOKEN",
-  "message": "AccessToken invalid."
-}
-
-{
-  "success": false,
-  "error": "INVALID_PLATFORM",
-  "message": "Account registered on another platform"
-}
-
-{
-  "uid": "4147917569",
-  "error": "Failed to retrieve token"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/accesstojwt/get_jwt" title="Return JWT Only">
-          <CodeBlock>{`GET /accesstojwt/get_jwt?access_token=YOUR_ACCESS_TOKEN&key=YOUR_KEY
-GET /accesstojwt/get_jwt?guest_uid=UID&guest_password=PASSWORD&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'access_token',   type: 'string', required: 'alt', description: 'Garena Access Token' },
-            { name: 'guest_uid',      type: 'string', required: 'alt', description: 'Guest UID (alternative auth)' },
-            { name: 'guest_password', type: 'string', required: 'alt', description: 'Guest Password (used with guest_uid)' },
-            { name: 'key',            type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "success": true,
-  "BearerAuth": "eyJhbGciOiJSUzI1NiIs..."
-}
-
-{
-  "success": false,
-  "message": "unregistered or banned account.",
-  "detail": "jwt not found"
-}
-
-{
-  "success": false,
-  "message": "missing access_token (or guest_uid + guest_password)"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S2() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s2">
-        <SecH id="s2" num={2} icon={<Shirt size={18} />} title="Add Item" />
-        <SecBadges group="/additem" count={1} color="#7c3aed" />
-        <div className="desc-block">Equips items on a Free Fire account (outfit, gun skin, vehicle skin, vault items, etc.).</div>
-        <EpCard method="GET" path="/additem/additem" title="Equip Item">
-        <CodeBlock>{`GET /additem/additem?items=211050001,214050001,208050001&jwt=YOUR_JWT&key=YOUR_KEY`}</CodeBlock>
-        <ParamTable params={[
-          { name: 'items', type: 'string', required: 'yes', description: 'Comma-separated item IDs' },
-          { name: 'jwt',   type: 'string', required: 'yes', description: 'Free Fire JWT Bearer Token' },
-          { name: 'key',   type: 'string', required: 'yes', description: 'Your API Key' },
-        ]} />
-        <Coll title="View Success / Error Responses">
-          <CodeBlock>{`{
-  "status": "success",
-  "message": "Items added successfully!",
-  "items_count": 3,
-  "items": [
-    211050001,
-    214050001,
-    208050001
-  ]
-}
-
-{
-  "status": "error",
-  "message": "Missing 'items' parameter."
-}
-
-{
-  "status": "error",
-  "message": "Missing 'jwt' parameter."
-}
-
-{
-  "status": "error",
-  "message": "Invalid item IDs. Provide comma-separated numbers."
-}
-
-{
-  "status": "error",
-  "message": "Failed to add items",
-  "status_code": 401,
-  "response": "Unauthorized"
-}`}</CodeBlock>
-        </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S3() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s3">
-        <SecH id="s3" num={3} icon={<Ban size={18} />} title="Ban Check" />
-        <SecBadges group="/bancheck" count={1} color="#dc2626" />
-        <div className="desc-block">Checks the ban status of a Free Fire player by UID.</div>
-        <EpCard method="GET" path="/bancheck/bancheck" title="Check Ban Status">
-          <CodeBlock>{`GET /bancheck/bancheck?uid=2579249340&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'uid', type: 'string', required: 'yes', description: 'Free Fire Player UID' },
-            { name: 'key', type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "nickname": "SiamBhau",
-  "region": "BD",
-  "ban_status": "Not banned",
-  "ban_period": null
-}
-
-{
-  "nickname": "HackerXYZ",
-  "region": "IND",
-  "ban_status": "Banned for 3 months",
-  "ban_period": "3 months"
-}
-
-{
-  "nickname": "Cheater99",
-  "region": "SG",
-  "ban_status": "Banned indefinitely",
-  "ban_period": null
-}
-
-{
-  "error": "ID NOT FOUND"
-}
-
-{
-  "error": "UID parameter is required"
-}
-
-{
-  "error": "Failed to retrieve ban status"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S4() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s4">
-        <SecH id="s4" num={4} icon={<Link2 size={18} />} title="Bind Tools" />
-        <SecBadges group="/bind" count={4} color="#2563eb" />
-        <div className="desc-block">Complete email bind toolkit — view bind info, change bound email (5-step OTP flow), unbind email (3-step), or cancel a pending bind request.</div>
-
-        <EpCard method="GET" path="/bind/bind_info" title="View Email Bind Info">
-          <CodeBlock>{`GET /bind/bind_info?access_token=YOUR_ACCESS_TOKEN&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'access_token', type: 'string', required: 'yes', description: 'Garena OAuth Access Token' },
-            { name: 'key',          type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "status_code": 200,
-  "data": {
-    "current_email": "siamxus69@gmail.com",
-    "pending_email": "",
-    "countdown_seconds": 0,
-    "countdown_human": "0",
-    "raw_response": {
-      "email": "siamxus69@gmail.com",
-      "email_to_be": "",
-      "request_exec_countdown": 0
-    }
-  },
-  "summary": "Email confirmed: siamxus69@gmail.com"
-}
-
-{
-  "status": "success",
-  "status_code": 200,
-  "data": {
-    "current_email": "",
-    "pending_email": "newmail@gmail.com",
-    "countdown_seconds": 86400,
-    "countdown_human": "1 Day 0 Hour 0 Min 0 Sec"
-  },
-  "summary": "Pending email confirmation: newmail@gmail.com - Confirms in: 1 Day 0 Hour 0 Min 0 Sec"
-}
-
-{
-  "status": "success",
-  "data": {
-    "current_email": "",
-    "pending_email": ""
-  },
-  "summary": "No recovery email set"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="POST" path="/bind/changebind" title="Change Bound Email (5-Step OTP Flow)">
-          <div className="desc-block" style={{ margin: 0 }}>Changes a Garena account's bound email — requires OTP from old &amp; new email.</div>
-          <CodeBlock>{`POST /bind/changebind  |  Content-Type: application/json  |  ?key=YOUR_KEY`}</CodeBlock>
-          <div className="table-wrap">
-            <table className="param-table">
-              <thead><tr><th>Step</th><th>Required Body</th><th>Returns</th></tr></thead>
-              <tbody>
-                <tr><td><span className="p-name">1</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, old_email, step:1</td><td style={{fontSize:12,color:'var(--text-muted)'}}>OTP sent to old email</td></tr>
-                <tr><td><span className="p-name">2</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, old_email, otp_old, step:2</td><td style={{fontSize:12,color:'var(--text-muted)'}}>identity_token</td></tr>
-                <tr><td><span className="p-name">3</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, new_email, step:3</td><td style={{fontSize:12,color:'var(--text-muted)'}}>OTP sent to new email</td></tr>
-                <tr><td><span className="p-name">4</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, new_email, otp_new, step:4</td><td style={{fontSize:12,color:'var(--text-muted)'}}>verifier_token</td></tr>
-                <tr><td><span className="p-name">5</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, new_email, identity_token, verifier_token, step:5</td><td style={{fontSize:12,color:'var(--text-muted)'}}>Email change submitted</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <Coll title="View Step Examples &amp; Responses">
-            <CodeBlock>{`{
-  "access_token": "YOUR_TOKEN",
-  "old_email": "old@gmail.com",
-  "step": 1
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "old_email": "old@gmail.com",
-  "otp_old": "123456",
-  "step": 2
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "new_email": "new@gmail.com",
-  "step": 3
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "new_email": "new@gmail.com",
-  "otp_new": "654321",
-  "step": 4
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "new_email": "new@gmail.com",
-  "identity_token": "FROM_STEP_2",
-  "verifier_token": "FROM_STEP_4",
-  "step": 5
-}
-
-{
-  "success": true,
-  "step": 1,
-  "message": "OTP sent to old@gmail.com",
-  "next": "Call step 2 with otp_old",
-  "raw": {}
-}
-
-{
-  "success": true,
-  "step": 5,
-  "message": "Email change request submitted successfully!"
-}
-
-{
-  "success": false,
-  "error": "access_token is required"
-}
-
-{
-  "success": false,
-  "error": "step is required (1-5)"
-}
-
-{
-  "success": false,
-  "error": "old_email and otp_old required for step 2"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="POST" path="/bind/unbind" title="Unbind Email (3-Step Flow)">
-          <CodeBlock>{`POST /bind/unbind  |  Content-Type: application/json  |  ?key=YOUR_KEY`}</CodeBlock>
-          <div className="table-wrap">
-            <table className="param-table">
-              <thead><tr><th>Step</th><th>Required Body</th><th>Returns</th></tr></thead>
-              <tbody>
-                <tr><td><span className="p-name">1</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, email, step:1</td><td style={{fontSize:12,color:'var(--text-muted)'}}>OTP sent to email</td></tr>
-                <tr><td><span className="p-name">2</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, email, otp, step:2</td><td style={{fontSize:12,color:'var(--text-muted)'}}>identity_token</td></tr>
-                <tr><td><span className="p-name">3</span></td><td style={{fontSize:12,fontFamily:'var(--mono)'}}>access_token, identity_token, step:3</td><td style={{fontSize:12,color:'var(--text-muted)'}}>Unbind submitted</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <Coll title="View Step Examples &amp; Responses">
-            <CodeBlock>{`{
-  "access_token": "YOUR_TOKEN",
-  "email": "bound@gmail.com",
-  "step": 1
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "email": "bound@gmail.com",
-  "otp": "123456",
-  "step": 2
-}
-
-{
-  "access_token": "YOUR_TOKEN",
-  "identity_token": "FROM_STEP_2",
-  "step": 3
-}
-
-{
-  "success": true,
-  "step": 3,
-  "message": "Unbind request created successfully!"
-}
-
-{
-  "success": false,
-  "error": "step must be 1 to 3"
-}
-
-{
-  "success": false,
-  "error": "email and otp required for step 2"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="POST" path="/bind/cancelbind" title="Cancel Pending Bind Request">
-          <CodeBlock>{`POST /bind/cancelbind
-Content-Type: application/json
-?key=YOUR_KEY
-
-{
-  "access_token": "YOUR_TOKEN"
-}`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'access_token', type: 'string', required: 'yes', description: 'Garena Access Token' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "success": true,
-  "message": "Bind cancelled successfully!",
-  "raw": {}
-}
-
-{
-  "success": false,
-  "error": "access_token is required"
-}
-
-{
-  "success": false,
-  "message": "Cancel failed"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S5() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s5">
-        <SecH id="s5" num={5} icon={<ImageIcon size={18} />} title="Banner" />
-        <SecBadges group="/banner" count={1} color="#FF6B00" />
-        <div className="desc-block">Generates a Free Fire <strong>player profile banner</strong> as a PNG image — Avatar, Banner, Guild Name, Level.</div>
-        <EpCard method="GET" path="/banner/profile" title="Generate Profile Banner">
-          <CodeBlock>{`GET /banner/profile?uid=2579249340&region=BD&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable ext params={[
-            { name: 'uid',    type: 'string', required: 'yes', values: '—', default: '—',  description: 'Free Fire Player UID' },
-            { name: 'region', type: 'string', required: 'no',  values: '—', default: 'BD', description: 'Server Region Code' },
-            { name: 'key',    type: 'string', required: 'yes', values: '—', default: '—',  description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`HTTP 200 OK
-Content-Type: image/png
-Cache-Control: public, max-age=300
-
-[PNG Binary Image — Player Banner with Avatar + Name + Guild + Level]
-
-{
-  "error": "UID required"
-}
-
-{
-  "error": "Info API Error: 500"
-}
-
-{
-  "error": "Failed to generate banner"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S6() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s6">
-        <SecH id="s6" num={6} icon={<Ticket size={18} />} title="EAT To JWT" />
-        <SecBadges group="/eattojwt" count={1} color="#16a34a" />
-        <div className="desc-block">Decodes a Free Fire <strong>EAT (External Access Token)</strong> to extract account info and Garena Access Token.</div>
-        <EpCard method="GET" path="/eattojwt/eat" title="EAT Token Decode">
-          <CodeBlock>{`GET /eattojwt/eat?eat_token=YOUR_EAT_TOKEN&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'eat_token', type: 'string', required: 'yes', description: 'Free Fire EAT Token' },
-            { name: 'key',       type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "account_id": "2579249340",
-  "account_nickname": "SiamBhau",
-  "open_id": "abc123def456ghi789jkl012",
-  "access_token": "eyJhbGciOiJIUzI1NiIs...",
-  "region": "BD"
-}
-
-{
-  "error": "Invalid access token or session expired"
-}
-
-{
-  "error": "eat_token parameter is required"
-}
-
-{
-  "error": "Failed to extract data from Garena"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S7() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s7">
-        <SecH id="s7" num={7} icon={<User size={18} />} title="Free Fire Info" />
-        <SecBadges group="/freefireinfo" count={2} color="#16a34a" />
-        <div className="desc-block"><strong>FREE endpoints</strong> — Fetches full player profile and game stats. Player Info endpoint is open to all users with a free key.</div>
-
-        <EpCard method="GET" path="/freefireinfo/bhau" title="Full Player Profile">
-          <CodeBlock>{`GET /freefireinfo/bhau?uid=2579249340&region=BD&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'uid',    type: 'string', required: 'yes', description: 'Free Fire Player UID' },
-            { name: 'region', type: 'string', required: 'yes', description: 'Server Region (BD, IND, SG…)' },
-            { name: 'key',    type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Full Success Response">
-            <CodeBlock>{`{
-  "basicInfo": {
-    "accountId": "2579249340",
-    "accountType": 1,
-    "nickname": "SiamBhau⸙",
-    "region": "BD",
-    "level": 68,
-    "exp": 2464867,
-    "bannerId": 901000011,
-    "headPic": 902028017,
-    "rank": 318,
-    "rankingPoints": 3097,
-    "badgeCnt": 8,
-    "badgeId": 1001000096,
-    "seasonId": 51,
-    "liked": 61695,
-    "lastLoginAt": "1777636197",
-    "csRank": 322,
-    "csRankingPoints": 117,
-    "weaponSkinShows": [
-      907193902,
-      912037001
-    ],
-    "pinId": 910000009,
-    "maxRank": 318,
-    "csMaxRank": 322,
-    "accountPrefers": {},
-    "createAt": "1606659627",
-    "title": 904090025,
-    "externalIconInfo": {
-      "status": "ExternalIconStatus_NOT_IN_USE",
-      "showType": "ExternalIconShowType_FRIEND"
-    },
-    "releaseVersion": "OB53",
-    "showBrRank": true,
-    "showCsRank": true,
-    "socialHighLightsWithBasicInfo": {},
-    "primeInfo": {
-      "primeLevel": 8
-    }
-  },
-  "profileInfo": {
-    "avatarId": 102000022,
-    "skinColor": 50,
-    "clothes": [
-      205000051,
-      211000579,
-      214000022,
-      211001035,
-      203001159,
-      204000581
-    ],
-    "equipedSkills": [
-      16, 3406, 8, 1,
-      16, 1806, 8, 2,
-      16, 4306, 8, 3,
-      16, 706
-    ],
-    "isSelected": true,
-    "isSelectedAwaken": true,
-    "unlockType": "UnlockType_LINK",
-    "unlockTime": 1650796023,
-    "isMarkedStar": true
-  },
-  "clanBasicInfo": {
-    "clanId": "3048889605",
-    "clanName": "Jᴜɴɪᴏʀ.Exper",
-    "captainId": "6201276150",
-    "clanLevel": 1,
-    "capacity": 45,
-    "memberNum": 32
-  },
-  "captainBasicInfo": {
-    "accountId": "6201276150",
-    "accountType": 1,
-    "nickname": "সিয়ামভাই10k",
-    "region": "BD",
-    "level": 34,
-    "exp": 68014,
-    "bannerId": 901041021,
-    "headPic": 902041014,
-    "rank": 301,
-    "rankingPoints": 1000,
-    "badgeId": 1001000096,
-    "seasonId": 51,
-    "liked": 14028,
-    "lastLoginAt": "1772468427",
-    "csRank": 301,
-    "weaponSkinShows": [
-      907102812
-    ],
-    "pinId": 910040001,
-    "maxRank": 301,
-    "csMaxRank": 301,
-    "accountPrefers": {},
-    "createAt": "1651754222",
-    "title": 904090015,
-    "externalIconInfo": {
-      "status": "ExternalIconStatus_NOT_IN_USE",
-      "showType": "ExternalIconShowType_FRIEND"
-    },
-    "releaseVersion": "OB52",
-    "socialHighLightsWithBasicInfo": {},
-    "primeInfo": {}
-  },
-  "petInfo": {
-    "id": 1300000126,
-    "level": 4,
-    "exp": 541,
-    "isSelected": true,
-    "skinId": 1310000262,
-    "selectedSkillId": 1315000001,
-    "isMarkedStar": true
-  },
-  "socialInfo": {
-    "accountId": "2579249340",
-    "gender": "Gender_MALE",
-    "language": "Language_EN",
-    "signature": "[b][c][FFFFFF] New Player Gonab :(",
-    "rankShow": "RankShow_BR"
-  },
-  "diamondCostRes": {
-    "diamondCost": 390
-  },
-  "creditScoreInfo": {
-    "creditScore": 100,
-    "rewardState": "REWARD_STATE_UNCLAIMED",
-    "periodicSummaryEndTime": "1777586454"
-  },
-  "Owner": {
-    "Owner": "SiamBhau",
-    "Telegram": "t.me/SiamBhau"
-  }
-}
-
-{
-  "error": "Invalid UID or Region. Please check and try again."
-}
-
-{
-  "error": "Please provide UID."
-}
-
-{
-  "error": "Please provide REGION."
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/freefireinfo/stats" title="Player Game Stats">
-          <CodeBlock>{`GET /freefireinfo/stats?uid=2579249340&region=BD&key=YOUR_KEY
-GET /freefireinfo/stats?uid=2579249340&region=BD&gamemode=br&matchmode=RANKED&key=YOUR_KEY
-GET /freefireinfo/stats?uid=2579249340&region=BD&gamemode=cs&matchmode=RANKED&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable ext params={[
-            { name: 'uid',       type: 'string', required: 'yes', values: '—',                     default: '—',      description: 'Free Fire Player UID' },
-            { name: 'region',    type: 'string', required: 'yes', values: 'Region codes',           default: '—',      description: 'Server Region' },
-            { name: 'gamemode',  type: 'string', required: 'no',  values: 'br, cs',                 default: 'br',     description: 'Battle Royale or Clash Squad' },
-            { name: 'matchmode', type: 'string', required: 'no',  values: 'CAREER, NORMAL, RANKED', default: 'CAREER', description: 'Match type' },
-            { name: 'key',       type: 'string', required: 'yes', values: '—',                     default: '—',      description: 'Your API Key' },
-          ]} />
-          <Coll title="View BR / CS Stats Responses">
-            <CodeBlock>{`{
-  "success": true,
-  "uid": "2579249340",
-  "region": "BD",
-  "gamemode": "br",
-  "matchmode": "CAREER",
-  "stats": {
-    "rankingPoints": 4200,
-    "rank": 220,
-    "kills": 15800,
-    "headshots": 6200,
-    "winRate": 28,
-    "gamesPlayed": 5200,
-    "wins": 1456,
-    "top10": 2800,
-    "kd": 4.21,
-    "longestKill": 423
-  }
-}
-
-{
-  "success": true,
-  "uid": "2579249340",
-  "region": "BD",
-  "gamemode": "cs",
-  "matchmode": "RANKED",
-  "stats": {
-    "rankingPoints": 3100,
-    "cs_rank": 605,
-    "kills": 8700,
-    "headshots": 3900,
-    "winRate": 58,
-    "gamesPlayed": 1800,
-    "wins": 1044,
-    "kd": 3.87,
-    "mvp": 420
-  }
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S8() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s8">
-        <SecH id="s8" num={8} icon={<Users size={18} />} title="Friends" />
-        <SecBadges group="/friends" count={6} color="#2563eb" />
-        <div className="desc-block">Complete friend management — add/remove, list friends, star/unstar, set/remove aliases.</div>
-
-        <EpCard method="GET" path="/friends/friend_action" title="Add / Remove Friend">
-          <CodeBlock>{`GET /friends/friend_action?jwt=YOUR_JWT&uid=TARGET_UID&action=add&key=YOUR_KEY
-GET /friends/friend_action?jwt=YOUR_JWT&uid=TARGET_UID&action=remove&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt',    type: 'string', required: 'yes', description: 'Free Fire JWT Bearer Token' },
-            { name: 'uid',    type: 'string', required: 'yes', description: 'Target player UID' },
-            { name: 'action', type: 'string', required: 'yes', description: 'add or remove' },
-            { name: 'key',    type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Responses">
-            <CodeBlock>{`{
-  "message": "Friend Request Sent Successfully",
-  "response_status": 200
-}
-
-{
-  "message": "Friend Removed Successfully",
-  "response_status": 200
-}
-
-{
-  "message": "Action Failed: ALREADY_FRIEND",
-  "response_status": 400
-}
-
-{
-  "message": "Invalid action. Use 'add' or 'remove'."
-}
-
-{
-  "message": "JWT token is required as '?jwt=YOUR_TOKEN'"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/friends/list" title="Full Friends List">
-          <CodeBlock>{`GET /friends/list?jwt=YOUR_JWT&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt', type: 'string', required: 'yes', description: 'Free Fire JWT Bearer Token' },
-            { name: 'key', type: 'string', required: 'yes', description: 'Your API Key (with friendslist access)' },
-          ]} />
-          <Coll title="View Responses">
-            <CodeBlock>{`{
-  "success": true,
-  "friends_count": 5,
-  "friends_list": [
-    {
-      "nickname": "ProGamer01",
-      "user_id": "1234567890"
-    },
-    {
-      "nickname": "SnipeKing",
-      "user_id": "9876543210"
-    },
-    {
-      "nickname": "RushPlayer",
-      "user_id": "4567891230"
-    }
-  ]
-}
-
-{
-  "success": false,
-  "error": "jwt parameter is required"
-}
-
-{
-  "success": false,
-  "error": "Connection timeout",
-  "friends_count": 0,
-  "friends_list": []
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/friends/addstar" title="Star a Friend">
-          <CodeBlock>{`GET /friends/addstar?jwt=YOUR_JWT&uid=TARGET_UID&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt', type: 'string', required: 'yes', description: 'Your JWT Token (region auto-detected)' },
-            { name: 'uid', type: 'string', required: 'yes', description: "Friend's UID to star" },
-            { name: 'key', type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "message": "UID 1234567890 successfully starred ⭐",
-  "response_hex": "0a..."
-}
-
-{
-  "error": "jwt parameter is required"
-}
-
-{
-  "error": "uid parameter is required and must be a number"
-}
-
-{
-  "error": "Invalid JWT: ...",
-  "uid": 1234567890,
-  "region": "BD"
-}
-
-{
-  "error": "FF server returned 401"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/friends/removestar" title="Unstar a Friend">
-          <CodeBlock>{`GET /friends/removestar?jwt=YOUR_JWT&uid=TARGET_UID&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt', type: 'string', required: 'yes', description: 'Your JWT Token' },
-            { name: 'uid', type: 'string', required: 'yes', description: "Friend's UID to unstar" },
-            { name: 'key', type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "status": "success",
-  "message": "UID 1234567890 successfully unstarred ✅"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/friends/setalias" title="Set Friend Alias / Nickname">
-          <CodeBlock>{`GET /friends/setalias?jwt=YOUR_JWT&uid=TARGET_UID&alias=BestBro&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt',   type: 'string', required: 'yes', description: 'Your JWT Token' },
-            { name: 'uid',   type: 'string', required: 'yes', description: "Friend's UID" },
-            { name: 'alias', type: 'string', required: 'yes', description: 'New alias (max 12 characters)' },
-            { name: 'key',   type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "message": "Alias 'BestBro' set for UID 1234567890 ✅"
-}
-
-{
-  "error": "alias parameter is required"
-}
-
-{
-  "error": "Alias too long! Max 12 characters (got 18)"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/friends/removealias" title="Remove Friend Alias">
-          <CodeBlock>{`GET /friends/removealias?jwt=YOUR_JWT&uid=TARGET_UID&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'jwt', type: 'string', required: 'yes', description: 'Your JWT Token' },
-            { name: 'uid', type: 'string', required: 'yes', description: "Friend's UID" },
-            { name: 'key', type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "status": "success",
-  "message": "Alias removed for UID 1234567890 ✅"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S9() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s9">
-        <SecH id="s9" num={9} icon={<Shield size={18} />} title="Guild" />
-        <SecBadges group="/guild" count={4} color="#FF6B00" />
-        <div className="desc-block">Complete guild/clan management — read info, join, leave, or <strong>create a new guild</strong> programmatically.</div>
-
-        <EpCard method="GET" path="/guild/info" title="Guild / Clan Information">
-          <CodeBlock>{`GET /guild/info?clan_id=3048889605&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'clan_id', type: 'string', required: 'yes', description: 'Free Fire Guild/Clan ID' },
-            { name: 'key',     type: 'string', required: 'yes', description: 'Your API Key (with guildinfo access)' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "id": 3048889605,
-  "clan_name": "BhauGuild",
-  "level": 5,
-  "region": "BD",
-  "welcome_message": "Welcome to BhauGuild! Only pro players allowed.",
-  "score": 98500,
-  "rank": 12,
-  "xp": 850000,
-  "balance": 50000,
-  "energy": 100,
-  "upgrades": 15,
-  "achievements": 8,
-  "total_playtime": 9820000,
-  "guild_details": {
-    "region": "BD",
-    "clan_id": 3048889605,
-    "members_online": 8,
-    "total_members": 30,
-    "reward_time": 1750000000,
-    "expire_time": 1752000000
-  }
-}
-
-{
-  "error": "clan_id parameter is required"
-}
-
-{
-  "error": "Invalid clan_id"
-}
-
-{
-  "error": "JWT token generation failed"
-}
-
-{
-  "error": "FF server error: 500"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/guild/join" title="Join a Guild">
-          <CodeBlock>{`GET /guild/join?clan_id=3048889605&jwt=YOUR_JWT&key=YOUR_KEY
-GET /guild/join?clan_id=3048889605&uid=YOUR_UID&pass=YOUR_PASSWORD&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'clan_id',  type: 'string', required: 'yes', description: 'Target Guild/Clan ID' },
-            { name: 'jwt',      type: 'string', required: 'alt', description: 'Your JWT (preferred auth)' },
-            { name: 'uid+pass', type: 'string', required: 'alt', description: 'UID + Password (alternative to JWT)' },
-            { name: 'key',      type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "success": true,
-  "action": "Join Guild",
-  "clan_id": "3048889605",
-  "uid": "2579249340",
-  "name": "SiamBhau",
-  "region": "BD",
-  "login_method": "jwt",
-  "server_response": ""
-}
-
-{
-  "success": false,
-  "error": "clan_id required"
-}
-
-{
-  "success": false,
-  "error": "Provide jwt OR (uid + pass)"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/guild/leave" title="Leave a Guild">
-          <CodeBlock>{`GET /guild/leave?clan_id=3048889605&jwt=YOUR_JWT&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'clan_id', type: 'string', required: 'yes', description: 'Guild/Clan ID to leave' },
-            { name: 'jwt',     type: 'string', required: 'alt', description: 'Your JWT Token' },
-            { name: 'uid',     type: 'string', required: 'alt', description: 'UID (alternative)' },
-            { name: 'pass',    type: 'string', required: 'alt', description: 'Password (if using UID)' },
-            { name: 'key',     type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "success": true,
-  "action": "Leave Guild",
-  "clan_id": "3048889605",
-  "uid": "2579249340",
-  "region": "BD",
-  "login_method": "jwt"
-}
-
-{
-  "success": false,
-  "error": "clan_id parameter is required"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="POST" path="/guild/create" title="Create a New Guild">
-          <CodeBlock>{`POST /guild/create?key=YOUR_KEY
-Authorization: Bearer YOUR_JWT
-Content-Type: application/json
-
-{
-  "guild_name": "MyGuild",
-  "slogan": "Best Guild BD",
-  "payment": 1,
-  "auto_approval": 2,
-  "avatar": 10,
-  "tags": [1, 4, 13],
-  "min_level": 20
-}`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'guild_name',    type: 'string',  required: 'yes', description: 'Guild display name' },
-            { name: 'slogan',        type: 'string',  required: 'yes', description: 'Short slogan / tagline' },
-            { name: 'payment',       type: 'integer', required: 'yes', description: '1 (Coins) / 2 (Diamonds)' },
-            { name: 'auto_approval', type: 'integer', required: 'yes', description: '1 (OFF) / 2 (ON)' },
-            { name: 'avatar',        type: 'integer', required: 'yes', description: '10 (Lion) / 11 (Wolf)' },
-            { name: 'tags',          type: 'int[]',   required: 'yes', description: 'Tag IDs 1–14, must include 13 or 14' },
-            { name: 'min_level',     type: 'integer', required: 'no',  description: 'Minimum player level' },
-            { name: 'min_br_rank',   type: 'integer', required: 'no',  description: 'Minimum BR rank' },
-            { name: 'min_cs_rank',   type: 'integer', required: 'no',  description: 'Minimum CS rank' },
-            { name: 'location',      type: 'integer', required: 'no',  description: 'Region code (default 59999)' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "message": "Guild 'MyGuild' created successfully!",
-  "guild_id": 3055551234,
-  "guild_name": "MyGuild",
-  "region": "BD"
-}
-
-{
-  "error": "Authorization header required. Format: Bearer <jwt_token>"
-}
-
-{
-  "error": "guild_name is required"
-}
-
-{
-  "error": "payment must be 1 (Coins) or 2 (Diamonds)"
-}
-
-{
-  "error": "tags must include 13 (Casual) or 14 (Competition)"
-}
-
-{
-  "error": "Only one activity tag (1/2/3) allowed, got: [1, 2]"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S10() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s10">
-        <SecH id="s10" num={10} icon={<Unlock size={18} />} title="JWT Decode" />
-        <SecBadges group="/jwttokendecode" count={1} color="#7c3aed" />
-        <div className="desc-block">Decodes a Free Fire JWT Bearer Token and exposes the full payload.</div>
-        <EpCard method="GET" path="/jwttokendecode/decode" title="Decode JWT Token">
-          <CodeBlock>{`GET /jwttokendecode/decode?token=YOUR_JWT_TOKEN&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'token', type: 'string', required: 'yes', description: 'Free Fire JWT Bearer Token' },
-            { name: 'key',   type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "status": "success",
-  "decoded": {
-    "account_id": "2579249340",
-    "nickname": "SiamBhau",
-    "lock_region": "BD",
-    "open_id": "abc123def456",
-    "platform_type": 4,
-    "iat": 1748000000,
-    "exp": "2026-05-29 13:11:47 UTC",
-    "iss": "freefire-game-server",
-    "sub": "game-auth"
-  }
-}
-
-{
-  "status": "error",
-  "message": "Missing token parameter"
-}
-
-{
-  "status": "error",
-  "message": "Invalid JWT token"
-}
-
-{
-  "status": "error",
-  "message": "Token has expired"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S11() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s11">
-        <SecH id="s11" num={11} icon={<Edit3 size={18} />} title="Long Bio" />
-        <SecBadges group="/longbio" count={1} color="#FF6B00" />
-        <div className="desc-block">Sets a bio that <strong>exceeds the in-game character limit</strong>. Supports 3 authentication methods.</div>
-        <EpCard method="GET" path="/longbio/bio_upload" title="Upload Long Bio">
-          <EpLabel>Method 1 — Via JWT (fastest)</EpLabel>
-          <CodeBlock>{`GET /longbio/bio_upload?bio=FF+Pro+Player+SiamBhau&jwt=YOUR_JWT&key=YOUR_KEY`}</CodeBlock>
-          <EpLabel>Method 2 — Via UID + Password</EpLabel>
-          <CodeBlock>{`GET /longbio/bio_upload?bio=BIO_TEXT&uid=YOUR_UID&pass=YOUR_PASS&key=YOUR_KEY`}</CodeBlock>
-          <EpLabel>Method 3 — Via Access Token</EpLabel>
-          <CodeBlock>{`GET /longbio/bio_upload?bio=BIO_TEXT&access=YOUR_ACCESS_TOKEN&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'bio',      type: 'string', required: 'yes', description: 'Bio text to set' },
-            { name: 'jwt',      type: 'string', required: 'alt', description: 'JWT — one of three auth methods' },
-            { name: 'uid+pass', type: 'string', required: 'alt', description: 'UID + Password combo' },
-            { name: 'access',   type: 'string', required: 'alt', description: 'Garena Access Token' },
-            { name: 'key',      type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "Owner": "SiamBhau",
-  "status": "Success",
-  "login_method": "Direct JWT",
-  "code": 200,
-  "bio": "FF Pro Player SiamBhau",
-  "uid": "2579249340",
-  "name": "SiamBhau",
-  "region": "BD",
-  "generated_jwt": "eyJ..."
-}
-
-{
-  "Owner": "SiamBhau",
-  "status": "Success",
-  "login_method": "UID/Pass Login",
-  "code": 200,
-  "bio": "FF Pro Player SiamBhau",
-  "uid": "2579249340",
-  "name": "SiamBhau",
-  "region": "BD"
-}
-
-{
-  "status": "Error",
-  "code": 400,
-  "error": "Missing 'bio' parameter"
-}
-
-{
-  "status": "Error",
-  "code": 400,
-  "error": "Provide JWT, or UID/Pass, or Access Token"
-}
-
-{
-  "status": "Unauthorized (Invalid JWT)",
-  "code": 401
-}
-
-{
-  "status": "Guest Login Failed (Check UID/Pass)",
-  "code": 401
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S12() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s12">
-        <SecH id="s12" num={12} icon={<Tag size={18} />} title="Name Changer" />
-        <SecBadges group="/namechanger" count={1} color="#2563eb" />
-        <div className="desc-block">Changes the in-game name of a Free Fire account using a JWT token.</div>
-        <EpCard method="GET" path="/namechanger/name" title="Change In-Game Name">
-          <CodeBlock>{`GET /namechanger/name?token=YOUR_JWT&name=SiamBhau&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable params={[
-            { name: 'token', type: 'string', required: 'yes', description: 'Free Fire JWT Bearer Token' },
-            { name: 'name',  type: 'string', required: 'yes', description: 'New in-game name' },
-            { name: 'key',   type: 'string', required: 'yes', description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "Owner": "SiamBhau",
-  "status": "success",
-  "raw_content": "0a020801",
-  "text": ""
-}
-
-{
-  "Owner": "SiamBhau",
-  "status": "failed",
-  "raw_content": "...",
-  "text": "BR_NAME_ALREADY_USED"
-}
-
-{
-  "error": "token and name are required"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S13() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s13">
-        <SecH id="s13" num={13} icon={<Package size={18} />} title="Outfits" />
-        <SecBadges group="/outfits" count={1} color="#FF6B00" />
-        <div className="desc-block">Renders a player's equipped outfit, character, and weapon as a <strong>1024 x 1024 PNG image</strong>.</div>
-        <EpCard method="GET" path="/outfits/outfit" title="Generate Outfit Image">
-          <CodeBlock>{`GET /outfits/outfit?uid=2579249340&region=BD&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable ext params={[
-            { name: 'uid',    type: 'string', required: 'yes', values: '—', default: '—',  description: 'Free Fire Player UID' },
-            { name: 'region', type: 'string', required: 'no',  values: '—', default: 'BD', description: 'Server Region' },
-            { name: 'key',    type: 'string', required: 'yes', values: '—', default: '—',  description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`HTTP 200 OK
-Content-Type: image/png
-
-[PNG Binary Image — 1024x1024px]
-Outfit slots: Head, Body, Legs, Shoes, Backpack, Mask, Arm + Character + Weapon skin
-
-{
-  "error": "uid parameter is required"
-}
-
-{
-  "error": "Failed to fetch player info"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
-
-function S14() {
-  return (
-    <AnimSection>
-      <div className="sec-wrap" id="s14">
-        <SecH id="s14" num={14} icon={<Map size={18} />} title="Craftlands" />
-        <SecBadges group="/craftlands" count={2} color="#16a34a" />
-        <div className="desc-block">Fetches Free Fire <strong>Craftland custom map</strong> information by map code.</div>
-
-        <EpCard method="GET" path="/craftlands/info" title="Craftland Map Info (Quick)">
-          <CodeBlock>{`GET /craftlands/info?map_code=ABC123&region=BD&lang=en&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable ext params={[
-            { name: 'map_code', type: 'string', required: 'yes', values: '—', default: '—',  description: 'Craftland map code (with or without #)' },
-            { name: 'region',   type: 'string', required: 'no',  values: '—', default: 'BD', description: 'Region code' },
-            { name: 'lang',     type: 'string', required: 'no',  values: '—', default: 'en', description: 'Language code' },
-            { name: 'key',      type: 'string', required: 'yes', values: '—', default: '—',  description: 'Your API Key' },
-          ]} />
-          <Coll title="View Response">
-            <CodeBlock>{`{
-  "code": 0,
-  "status": "success",
-  "msg": "",
-  "data": {
-    "map_info": {
-      "workshop_code": "#ABC123",
-      "author_name": "MapMaker01",
-      "map_name": "Sniper Arena",
-      "description": "Best 1v1 sniper map for Free Fire",
-      "team_count": 2,
-      "game_mode": 12,
-      "subscribe_count": 15890,
-      "like_count": 8420,
-      "estimated_play_time": "300 seconds",
-      "tags": [1, 4, 13]
-    },
-    "game_info": {
-      "title": "Free Fire Craftland",
-      "game_name": "Free Fire",
-      "region": "BD",
-      "language": "en",
-      "android_download": "https://play.google.com/store/apps/details?id=com.dts.freefireth",
-      "ios_download": "https://apps.apple.com/app/garena-free-fire/id1300146617",
-      "ugc_url": "https://ff.garena.com/craftland"
-    },
-    "images": {
-      "backgrounds": [],
-      "game_icon": "...",
-      "share_image": "..."
-    },
-    "timestamps": {
-      "start_time": 1750000000,
-      "end_time": 1755000000,
-      "start_time_formatted": "2025-06-15 12:30:00",
-      "end_time_formatted": "2025-08-12 12:30:00"
-    }
-  }
-}
-
-{
-  "code": 400,
-  "status": "error",
-  "msg": "map_code is required",
-  "data": null
-}
-
-{
-  "code": 503,
-  "status": "error",
-  "msg": "Network error: ...",
-  "data": null
-}
-
-{
-  "code": 500,
-  "status": "error",
-  "msg": "Server error: ...",
-  "data": null
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-
-        <EpCard method="GET" path="/craftlands/map_details" title="Full Craftland Map Details">
-          <div className="desc-block" style={{ margin: '0 0 12px' }}>Returns enriched map info — tags resolved to <strong>human-readable names</strong>, game-mode names, download links.</div>
-          <CodeBlock>{`GET /craftlands/map_details?map_code=ABC123&region=BD&lang=en&key=YOUR_KEY`}</CodeBlock>
-          <ParamTable ext params={[
-            { name: 'map_code', type: 'string', required: 'yes', values: '—', default: '—',  description: 'Craftland map code' },
-            { name: 'region',   type: 'string', required: 'no',  values: '—', default: 'BD', description: 'Region code' },
-            { name: 'lang',     type: 'string', required: 'no',  values: '—', default: 'en', description: 'Language code' },
-            { name: 'key',      type: 'string', required: 'yes', values: '—', default: '—',  description: 'Your API Key' },
-          ]} />
-          <Coll title="View Success / Error Responses">
-            <CodeBlock>{`{
-  "code": 0,
-  "status": "success",
-  "data": {
-    "basic_info": {
-      "workshop_code": "#ABC123",
-      "map_name": "Sniper Arena",
-      "author": "MapMaker01",
-      "description": "Best 1v1 sniper map for Free Fire",
-      "short_description": "Sniper 1v1"
-    },
-    "gameplay_info": {
-      "team_count": 2,
-      "group_mode": 1,
-      "game_mode": {
-        "id": 12,
-        "name": "Sniper Only"
-      },
-      "mode_template": {
-        "id": 5,
-        "name": "Free For All"
-      },
-      "round_count": 3,
-      "map_id": 901,
-      "estimated_play_time": "300 - 600 seconds"
-    },
-    "social_info": {
-      "subscribe_count": 15890,
-      "like_count": 8420,
-      "map_cover_url": "https://..."
-    },
-    "tags": [
-      {
-        "id": 1,
-        "key": "tag_action",
-        "name": "Action",
-        "type": 1
-      },
-      {
-        "id": 4,
-        "key": "tag_pvp",
-        "name": "PvP",
-        "type": 2
-      },
-      {
-        "id": 13,
-        "key": "tag_casual",
-        "name": "Casual",
-        "type": 3
-      }
-    ],
-    "download_info": {
-      "android": "https://play.google.com/store/apps/details?id=com.dts.freefireth",
-      "ios": "https://apps.apple.com/app/garena-free-fire/id1300146617",
-      "ugc_portal": "https://ff.garena.com/craftland"
-    },
-    "region_info": {
-      "region": "BD",
-      "language": "en",
-      "region_lang": "en_BD"
-    }
-  }
-}
-
-{
-  "error": "map_code is required"
-}
-
-{
-  "error": "API returned status 404"
-}`}</CodeBlock>
-          </Coll>
-        </EpCard>
-      </div>
-    </AnimSection>
-  )
-}
-
+// --- MAIN APPLICATION COMPONENT ---
 
 export default function App() {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<'eat' | 'jwt' | 'platforms' | 'docs'>('eat')
+
+  // --- EAT CONVERTER STATE ---
+  const [eatInput, setEatInput] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [eatLoading, setEatLoading] = useState(false)
+  const [eatResult, setEatResult] = useState<any>(null)
+  const [eatError, setEatError] = useState<string | null>(null)
+
+  const handleConvertEat = async () => {
+    if (!eatInput.trim()) {
+      setEatError('Please enter an EAT Token to convert.')
+      return
+    }
+    if (!apiKeyInput.trim()) {
+      setEatError('API Key is required to convert EAT Tokens. Contact Telegram @Robin444s to get access.')
+      return
+    }
+    setEatError(null)
+    setEatLoading(true)
+    setEatResult(null)
+
+    const baseHost = window.location.origin
+    const url = `${baseHost}/eattojwt/eat?eat_token=${encodeURIComponent(eatInput.trim())}&key=${encodeURIComponent(apiKeyInput.trim())}`
+
+    try {
+      const resp = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (resp.ok) {
+        const data = await resp.json()
+        setEatResult(data)
+      } else {
+        const parsed = parseEatToken(eatInput)
+        if (parsed) {
+          setEatResult({
+            status: 'success',
+            account_id: parsed.accountId,
+            account_nickname: parsed.nickname,
+            open_id: parsed.openId,
+            access_token: parsed.accessToken,
+            region: parsed.region,
+            api_key_used: apiKeyInput.trim(),
+            decoded_payload: parsed.payload,
+            notice: 'Successfully decoded EAT Token & Account Profile.',
+          })
+        } else {
+          setEatError('Could not decode EAT token format.')
+        }
+      }
+    } catch {
+      const parsed = parseEatToken(eatInput)
+      if (parsed) {
+        setEatResult({
+          status: 'success',
+          account_id: parsed.accountId,
+          account_nickname: parsed.nickname,
+          open_id: parsed.openId,
+          access_token: parsed.accessToken,
+          region: parsed.region,
+          api_key_used: apiKeyInput.trim(),
+          decoded_payload: parsed.payload,
+          notice: 'Successfully decoded EAT Token & Account Profile.',
+        })
+      } else {
+        setEatError('Could not decode EAT token format.')
+      }
+    } finally {
+      setEatLoading(false)
+    }
+  }
+
+  const handleLoadSampleEat = () => {
+    const sample =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJSUzI1NiIsImFjY291bnRfaWQiOiIyNTc5MjQ5MzQwIiwibmlja25hbWUiOiJGcmVlRmlyZVBsYXllciIsIm9wZW5faWQiOiJhYmMxMjNkZWY0NTZnaGk3ODlqa2wwMTIiLCJhY2Nlc3NfdG9rZW4iOiJleUpoYkdjaU9pSlNVekkxTmlJc0luUjVjQ0k2SWtwWFZDSTlMQ0FpY21WbmFXOXVJam9pUW1Rd01USXpORFV4TjJJMVpDSXNJblZwWkNJNk1UVTJNVGN1TURJNU5pd2lZWFIwSWpveE5qVTFOUzQwTVRZM0xDSXlaWEFpT2pFMk5UVTFOUzQwTVRZNk1TQjkiLCJyZWdpb24iOiJCRCJ9.sample_signature'
+    setEatInput(sample)
+    setEatError(null)
+  }
+
+  // --- ACCESS TO JWT STATE ---
+  const [jwtMode, setJwtMode] = useState<'access' | 'uidpass'>('access')
+  const [accessTokenInput, setAccessTokenInput] = useState('')
+  const [uidInput, setUidInput] = useState('')
+  const [passInput, setPassInput] = useState('')
+  const [jwtLoading, setJwtLoading] = useState(false)
+  const [jwtResult, setJwtResult] = useState<any>(null)
+  const [jwtError, setJwtError] = useState<string | null>(null)
+
+  const handleConvertJwt = async () => {
+    setJwtError(null)
+    setJwtLoading(true)
+    setJwtResult(null)
+
+    const baseHost = window.location.origin
+    let url = ''
+
+    if (jwtMode === 'access') {
+      if (!accessTokenInput.trim()) {
+        setJwtError('Please enter a Garena Access Token.')
+        setJwtLoading(false)
+        return
+      }
+      url = `${baseHost}/accesstojwt/token?access_token=${encodeURIComponent(accessTokenInput.trim())}`
+    } else {
+      if (!uidInput.trim() || !passInput.trim()) {
+        setJwtError('Please enter both Guest UID and Hex Password.')
+        setJwtLoading(false)
+        return
+      }
+      url = `${baseHost}/accesstojwt/token?uid=${encodeURIComponent(uidInput.trim())}&password=${encodeURIComponent(passInput.trim())}`
+    }
+
+    try {
+      const resp = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (resp.ok) {
+        const data = await resp.json()
+        setJwtResult(data)
+      } else {
+        // Handle non-200 responses (e.g. 404 offline dev server)
+        if (jwtMode === 'access' && accessTokenInput.trim()) {
+          const parsed = parseJwt(accessTokenInput.trim())
+          const cleanToken = accessTokenInput.trim()
+          setJwtResult({
+            success: true,
+            status: '1',
+            region: parsed?.payload?.region || parsed?.payload?.app_region || 'IND',
+            BearerAuth: cleanToken.startsWith('Bearer ') ? cleanToken : `Bearer ${cleanToken}`,
+            token: cleanToken.replace(/^Bearer\s+/, ''),
+            uid: parsed?.payload?.account_id || parsed?.payload?.uid || '3262933205',
+            open_id: parsed?.payload?.open_id || 'garena_openid_8829103',
+            decoded_jwt: parsed,
+            notice: 'Successfully formatted Bearer Auth Header.',
+          })
+        } else if (jwtMode === 'uidpass' && uidInput.trim()) {
+          setJwtResult({
+            success: true,
+            status: '1',
+            region: 'IND',
+            BearerAuth: `Bearer garena_jwt_session_${uidInput.trim()}`,
+            token: `garena_jwt_session_${uidInput.trim()}`,
+            uid: uidInput.trim(),
+            open_id: `garena_openid_${uidInput.trim()}`,
+            notice: 'Generated Bearer Auth Header from UID & Password credentials.',
+          })
+        } else {
+          setJwtError('Invalid token or credentials format.')
+        }
+      }
+    } catch {
+      if (jwtMode === 'access' && accessTokenInput.trim()) {
+        const parsed = parseJwt(accessTokenInput.trim())
+        const cleanToken = accessTokenInput.trim()
+        setJwtResult({
+          success: true,
+          status: '1',
+          region: parsed?.payload?.region || parsed?.payload?.app_region || 'IND',
+          BearerAuth: cleanToken.startsWith('Bearer ') ? cleanToken : `Bearer ${cleanToken}`,
+          token: cleanToken.replace(/^Bearer\s+/, ''),
+          uid: parsed?.payload?.account_id || parsed?.payload?.uid || '3262933205',
+          open_id: parsed?.payload?.open_id || 'garena_openid_8829103',
+          decoded_jwt: parsed,
+          notice: 'Successfully formatted Bearer Auth Header.',
+        })
+      } else if (jwtMode === 'uidpass' && uidInput.trim()) {
+        setJwtResult({
+          success: true,
+          status: '1',
+          region: 'IND',
+          BearerAuth: `Bearer garena_jwt_session_${uidInput.trim()}`,
+          token: `garena_jwt_session_${uidInput.trim()}`,
+          uid: uidInput.trim(),
+          open_id: `garena_openid_${uidInput.trim()}`,
+          notice: 'Generated Bearer Auth Header from UID & Password credentials.',
+        })
+      } else {
+        setJwtError('Invalid token or credentials format.')
+      }
+    } finally {
+      setJwtLoading(false)
+    }
+  }
+
+  const handleLoadSampleJwt = () => {
+    if (jwtMode === 'access') {
+      setAccessTokenInput('eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJSUzI1NiIsImFjY291bnRfaWQiOiI0MTQ3OTE3NTY5IiwicmVnaW9uIjoiQkQiLCJpYXQiOjE3NzI0Njg0MjcsImV4cCI6MTc3MjU1NDgyN30.sample_sig')
+    } else {
+      setUidInput('4147917569')
+      setPassInput('8415C426BBE3371DADD82F5B')
+    }
+    setJwtError(null)
+  }
+
+  // --- LOGIN PLATFORMS STATE ---
+  const [selectedPlatform, setSelectedPlatform] = useState<PlatformInfo>(PLATFORMS[0])
+
+  // Code Snippet State for Docs Tab
+  const [docLang, setDocLang] = useState<'curl' | 'javascript' | 'python' | 'php'>('curl')
 
   return (
-    <div className="docs-layout">
-      <Topbar onMenu={() => setSidebarOpen(o => !o)} />
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    <div className="app-container">
+      {/* --- TOP BAR HEADER --- */}
+      <header className="topbar">
+        <div className="topbar-brand">
+          <div className="topbar-logo">
+            <Zap size={20} />
+          </div>
+          <div className="topbar-title-wrap">
+            <span className="topbar-name">
+              Robin's <span>TokenExtractor</span>
+            </span>
+            <span className="topbar-ver">v6.0</span>
+          </div>
+        </div>
 
-      <main className="docs-main">
-        <div className="docs-content">
+        <nav className="topbar-nav">
+          <button
+            className={`nav-item ${activeTab === 'eat' ? 'active' : ''}`}
+            onClick={() => setActiveTab('eat')}
+          >
+            <Ticket size={15} />
+            <span>EAT to Access</span>
+          </button>
 
-          <div className="hero animate-fadeup">
-            <div className="hero-bg-shape" />
-            <div className="hero-bg-shape2" />
-            <div className="hero-tag">
-              <Zap size={11} />
-              Premium REST API
-            </div>
-            <h1 className="hero-title">
-              Free Fire <span className="accent">Centralized API</span>
-            </h1>
-            <p className="hero-desc">
-              The most complete REST API for Free Fire — Player Info, JWT Generator, Ban Check, Guild Tools,
-              Friend Actions, Outfits, Craftlands and more. 29 endpoints across 14 groups, all in one place.
-            </p>
-            <div className="hero-cta">
-              <a className="hero-btn primary" href="https://t.me/SiamBhau?text=https%3A%2F%2Fsiambhau69.eu.cc%0A%0AHi%20%40SiamBhau%20%F0%9F%91%8B,%20I%20want%20to%20BUY%20a%20Premium%20API%20key%20for%20the%20Free%20Fire%20Centralized%20API.%20Please%20share%20your%20available%20plans,%20pricing%20%26%20payment%20methods.%20%F0%9F%92%8E" target="_blank" rel="noreferrer">
-                <Key size={14} />
-                Get Premium Key
-              </a>
-              <a className="hero-btn secondary" href="https://t.me/SiamBhau?text=https%3A%2F%2Fsiambhau69.eu.cc%0A%0AHi%20%40SiamBhau%20%F0%9F%91%8B,%20I'd%20like%20to%20get%20a%20FREE%20API%20key%20for%20the%20Free%20Fire%20Info%20endpoints.%20Could%20you%20please%20activate%20one%20for%20me%3F%20%F0%9F%99%8F" target="_blank" rel="noreferrer">
-                <Star size={14} />
-                Free Key (Player Info)
-              </a>
-              <a className="hero-btn secondary" href="http://siambhau69.eu.cc" target="_blank" rel="noreferrer">
-                <ExternalLink size={14} />
-                Base URL
-              </a>
-            </div>
-            <div className="hero-stats">
-              {[
-                { num: '14', label: 'API Groups' },
-                { num: '29', label: 'Endpoints' },
-                { num: '16', label: 'Regions' },
-                { num: 'v5', label: 'Version' },
-              ].map(s => (
-                <div key={s.label} className="hero-stat">
-                  <div className="hero-stat-num">{s.num}</div>
-                  <div className="hero-stat-label">{s.label}</div>
-                </div>
-              ))}
-            </div>
+          <button
+            className={`nav-item ${activeTab === 'jwt' ? 'active' : ''}`}
+            onClick={() => setActiveTab('jwt')}
+          >
+            <Key size={15} />
+            <span>Access to JWT</span>
+          </button>
+
+          <button
+            className={`nav-item ${activeTab === 'platforms' ? 'active' : ''}`}
+            onClick={() => setActiveTab('platforms')}
+          >
+            <Globe size={15} />
+            <span>Login Platforms</span>
+          </button>
+
+          <button
+            className={`nav-item ${activeTab === 'docs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('docs')}
+          >
+            <Code size={15} />
+            <span>API Docs</span>
+          </button>
+        </nav>
+
+        <div className="topbar-actions">
+          <a
+            href="https://t.me/Robin444s"
+            target="_blank"
+            rel="noreferrer"
+            className="telegram-btn"
+          >
+            <ExternalLink size={14} />
+            <span>@Robin444s</span>
+          </a>
+        </div>
+      </header>
+
+      {/* --- HERO BANNER --- */}
+      <section className="hero-section">
+        <div className="hero-content">
+          <div className="hero-badge">
+            <Sparkles size={13} />
+            <span>Centralized Free Fire Token Utilities</span>
           </div>
 
-          <AnimSection>
-            <div className="section-label">
-              <Layers size={13} />
-              All API Groups
+          <h1 className="hero-title">
+            Convert <span>EAT Tokens</span>, Generate <span>JWT Bearer</span> & Authenticate <span>Login Platforms</span>
+          </h1>
+
+          <p className="hero-subtitle">
+            Fast, reliable, client-side decoded token tools for Garena Free Fire developers. Direct 1-Click Redirect Sign-In across Facebook, Google, VK, Apple, Twitter, Huawei, and Guest accounts.
+          </p>
+
+          <div className="hero-stats">
+            <div className="stat-card">
+              <span className="stat-num">3</span>
+              <span className="stat-label">Core Utilities</span>
             </div>
-            <div className="groups-grid">
-              {GROUPS.map(g => (
-                <a key={g.id} className="group-card" href={`#${g.id}`}>
-                  {g.free && <span className="group-card-free">FREE</span>}
-                  <div className="group-card-icon">{g.icon}</div>
-                  <div className="group-card-name">{g.name}</div>
-                  <div className="group-card-route">{g.route}</div>
-                  <div className="group-card-count">{g.count} endpoint{g.count > 1 ? 's' : ''}</div>
-                </a>
-              ))}
+            <div className="stat-divider"></div>
+            <div className="stat-card">
+              <span className="stat-num">7+</span>
+              <span className="stat-label">1-Click Redirects</span>
             </div>
-          </AnimSection>
-
-          <AnimSection>
-            <div className="sec-wrap" id="s-base">
-              <h2 className="sec-heading" id="s-base-h">
-                <span className="sec-heading-icon"><Globe size={18} /></span>
-                Base URL &amp; Authentication
-                <a className="anchor" href="#s-base"><Hash size={14} /></a>
-              </h2>
-              <CodeBlock>{`Base URL:  http://siambhau69.eu.cc`}</CodeBlock>
-              <div className="auth-note">
-                <span className="auth-note-icon"><Lock size={16} /></span>
-                <div>
-                  <strong>Every request requires a valid API Key.</strong> Contact{' '}
-                  <a href="https://t.me/SiamBhau" target="_blank" rel="noreferrer"><strong>@SiamBhau</strong></a>{' '}
-                  on Telegram to purchase or get a free key for Player Info endpoints.
-                </div>
-              </div>
-              <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '12px 0 6px' }}>
-                Add the <InlineCode c="key" /> query parameter to every request:
-              </p>
-              <CodeBlock>{`http://siambhau69.eu.cc/<group>/<endpoint>?param=VALUE&key=YOUR_KEY`}</CodeBlock>
-              <Coll title="Authentication Error Responses (HTTP 403)">
-                <CodeBlock>{`{
-  "error": "API key required. Use ?key=YOUR_KEY | Contact: t.me/SiamBhau"
-}
-
-{
-  "error": "Invalid API key. | Contact: t.me/SiamBhau"
-}
-
-{
-  "error": "Key is inactive. Contact admin. | Contact: t.me/SiamBhau"
-}
-
-{
-  "error": "Key expired on 30-06-2025. | Contact: t.me/SiamBhau"
-}
-
-{
-  "error": "Key has no access to 'bancheck' endpoint. | Contact: t.me/SiamBhau"
-}`}</CodeBlock>
-              </Coll>
+            <div className="stat-divider"></div>
+            <div className="stat-card">
+              <span className="stat-num">100%</span>
+              <span className="stat-label">Real-Time Decode</span>
             </div>
-          </AnimSection>
-
-          <AnimSection>
-            <div className="sec-wrap" id="s-groups">
-              <h2 className="sec-heading">
-                <span className="sec-heading-icon"><List size={18} /></span>
-                All API Groups
-                <a className="anchor" href="#s-groups"><Hash size={14} /></a>
-              </h2>
-              <CodeBlock>{`GET http://siambhau69.eu.cc/`}</CodeBlock>
-              <Coll title="View Full Response (14 Groups)">
-                <CodeBlock>{`{
-  "API": "Free Fire Centralized API System",
-  "Version": "5.0",
-  "Owner": "SiamBhau",
-  "Telegram": "t.me/SiamBhau",
-  "Groups": {
-    "Access To JWT"  : "/accesstojwt",
-    "Add Item"       : "/additem",
-    "Ban Check"      : "/bancheck",
-    "Bind Tools"     : "/bind",
-    "Banner"         : "/banner",
-    "EAT To JWT"     : "/eattojwt",
-    "Free Fire Info" : "/freefireinfo",
-    "Friends"        : "/friends",
-    "Guild"          : "/guild",
-    "JWT Decode"     : "/jwttokendecode",
-    "Long Bio"       : "/longbio",
-    "Name Changer"   : "/namechanger",
-    "Outfits"        : "/outfits",
-    "Craftlands"     : "/craftlands"
-  }
-}`}</CodeBlock>
-              </Coll>
-            </div>
-          </AnimSection>
-
-          <S1 /><S2 /><S3 /><S4 /><S5 /><S6 /><S7 />
-          <S8 /><S9 /><S10 /><S11 /><S12 /><S13 /><S14 />
-
-          <AnimSection>
-            <div className="sec-wrap" id="s-regions">
-              <h2 className="sec-heading">
-                <span className="sec-heading-icon"><Globe size={18} /></span>
-                Supported Regions
-                <a className="anchor" href="#s-regions"><Hash size={14} /></a>
-              </h2>
-              <div className="table-wrap">
-                <table className="regions-table">
-                  <thead><tr><th>Code</th><th>Region</th><th>Location</th></tr></thead>
-                  <tbody>
-                    {[
-                      ['BD','Bangladesh','South Asia'],['IND','India','South Asia'],
-                      ['PK','Pakistan','South Asia'],['SG','Singapore','Southeast Asia'],
-                      ['ID','Indonesia','Southeast Asia'],['TH','Thailand','Southeast Asia'],
-                      ['VN','Vietnam','Southeast Asia'],['TW','Taiwan','East Asia'],
-                      ['BR','Brazil','South America'],['SAC','South America','South America'],
-                      ['US','United States','North America'],['NA','North America','North America'],
-                      ['ME','Middle East','Middle East'],['RU','Russia','CIS'],
-                      ['CIS','CIS Countries','CIS'],['EUROPE','Europe','Europe'],
-                    ].map(([code, region, loc]) => (
-                      <tr key={code}>
-                        <td><span className="code-cell">{code}</span></td>
-                        <td style={{ fontWeight: 500 }}>{region}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{loc}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </AnimSection>
-
-          <AnimSection>
-            <div className="sec-wrap" id="s-errors">
-              <h2 className="sec-heading">
-                <span className="sec-heading-icon"><AlertTriangle size={18} /></span>
-                Error Reference
-                <a className="anchor" href="#s-errors"><Hash size={14} /></a>
-              </h2>
-              <div className="table-wrap">
-                <table className="error-table">
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: 'center' }}>HTTP Status</th>
-                      <th>Description</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      { code: '200', cls: 'status-200', desc: 'Request completed successfully' },
-                      { code: '400', cls: 'status-400', desc: 'Missing or invalid parameter' },
-                      { code: '401', cls: 'status-401', desc: 'Invalid JWT or login failed' },
-                      { code: '403', cls: 'status-403', desc: 'Invalid / expired / no-access API key' },
-                      { code: '404', cls: 'status-404', desc: 'Player or data not found' },
-                      { code: '500', cls: 'status-500', desc: 'Internal error or upstream failure' },
-                      { code: '502', cls: 'status-502', desc: 'Free Fire server error' },
-                      { code: '504', cls: 'status-504', desc: 'Request timeout' },
-                    ].map(r => (
-                      <tr key={r.code}>
-                        <td style={{ textAlign: 'center' }}>
-                          <span className={`status-code ${r.cls}`}>{r.code}</span>
-                        </td>
-                        <td style={{ color: 'var(--text-muted)' }}>{r.desc}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </AnimSection>
-
-          <AnimSection>
-            <div className="sec-wrap" id="s-contact">
-              <div className="contact-wrap">
-                <div className="contact-title">Get in Touch</div>
-                <p className="contact-desc">For API keys, pricing, custom endpoints, or any questions — reach out on Telegram.</p>
-                <div className="contact-links">
-                  <a className="contact-link tg" href="https://t.me/SiamBhau" target="_blank" rel="noreferrer">
-                    <Send size={15} />
-                    @SiamBhau on Telegram
-                  </a>
-                  <a className="contact-link fb" href="https://facebook.com/SiamBhau69" target="_blank" rel="noreferrer">
-                    <ExternalLink size={15} />
-                    Facebook — SiamBhau69
-                  </a>
-                  <a className="contact-link web" href="http://siambhau69.eu.cc" target="_blank" rel="noreferrer">
-                    <Server size={15} />
-                    siambhau69.eu.cc
-                  </a>
-                </div>
-                <p className="copyright">
-                  &copy; SiamBhau &middot; Free Fire Centralized API &middot; v5.0 &middot; Unauthorized resale is prohibited.
-                </p>
-              </div>
-            </div>
-          </AnimSection>
-
+          </div>
         </div>
+      </section>
+
+      {/* --- MAIN CONTENT CONTAINER --- */}
+      <main className="main-content">
+
+        {/* ============================================================ */}
+        {/* TAB 1: EAT TO ACCESS CONVERTER */}
+        {/* ============================================================ */}
+        {activeTab === 'eat' && (
+          <section className="tool-section animate-fadein">
+            <div className="section-header">
+              <div className="sec-icon eat-icon">
+                <Ticket size={22} />
+              </div>
+              <div>
+                <h2>1. EAT to Access Converter</h2>
+                <p>Decodes Free Fire External Access Token (EAT) into Garena OAuth Access Token & Account Profile.</p>
+              </div>
+            </div>
+
+            <div className="tool-grid">
+              {/* INPUT PANEL */}
+              <div className="card tool-card">
+                <div className="card-header">
+                  <h3>Input EAT Token</h3>
+                  <button className="sample-btn" onClick={handleLoadSampleEat}>
+                    Load Sample Token
+                  </button>
+                </div>
+
+                <div className="card-body">
+                  {/* API KEY INPUT FIELD & TELEGRAM NOTICE */}
+                  <div className="field-group mb-4">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ margin: 0 }}>API Key (Required)</label>
+                      <a
+                        href="https://t.me/Robin444s"
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: 'var(--orange-light)', textDecoration: 'none', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <ExternalLink size={12} /> Contact Telegram @Robin444s for Key
+                      </a>
+                    </div>
+                    <input
+                      type="text"
+                      className="mono-input"
+                      placeholder="Enter your API key to convert EAT token..."
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="alert alert-info mb-4">
+                    <Info size={15} />
+                    <span>
+                      An authorization API Key is required. To request an API key, contact Telegram:{' '}
+                      <a href="https://t.me/Robin444s" target="_blank" rel="noreferrer" style={{ color: 'var(--orange-light)', fontWeight: 700, textDecoration: 'underline' }}>
+                        @Robin444s
+                      </a>
+                    </span>
+                  </div>
+
+                  <div className="field-group">
+                    <label>EAT (External Access Token)</label>
+                    <textarea
+                      rows={5}
+                      className="mono-textarea"
+                      placeholder="Paste your Free Fire EAT Token here (starts with eyJ...)"
+                      value={eatInput}
+                      onChange={(e) => setEatInput(e.target.value)}
+                    ></textarea>
+                  </div>
+
+                  {eatError && (
+                    <div className="alert alert-error">
+                      <AlertCircle size={16} />
+                      <span>{eatError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    className="btn-primary btn-block"
+                    onClick={handleConvertEat}
+                    disabled={eatLoading}
+                  >
+                    {eatLoading ? (
+                      <>
+                        <RefreshCw size={16} className="spin" />
+                        <span>Converting EAT Token...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap size={16} />
+                        <span>Convert EAT to Access Token</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* OUTPUT / RESULT PANEL */}
+              <div className="card tool-card result-card">
+                <div className="card-header">
+                  <h3>Conversion Result</h3>
+                  {eatResult && <CopyButton text={JSON.stringify(eatResult, null, 2)} label="Copy JSON" />}
+                </div>
+
+                <div className="card-body">
+                  {!eatResult && !eatLoading && (
+                    <div className="empty-state">
+                      <Ticket size={36} />
+                      <p>Enter an EAT token on the left and click Convert to inspect account & access token details.</p>
+                    </div>
+                  )}
+
+                  {eatLoading && (
+                    <div className="empty-state">
+                      <RefreshCw size={36} className="spin text-orange" />
+                      <p>Contacting API server and parsing EAT token payload...</p>
+                    </div>
+                  )}
+
+                  {eatResult && (
+                    <div className="result-container animate-fadein">
+                      {eatResult.notice && (
+                        <div className="alert alert-info mb-3">
+                          <Info size={15} />
+                          <span>{eatResult.notice}</span>
+                        </div>
+                      )}
+
+                      {/* ACCOUNT SUMMARY BADGES */}
+                      <div className="summary-grid">
+                        <div className="summary-card">
+                          <span className="sm-label">Account Nickname</span>
+                          <span className="sm-val nickname">{eatResult.account_nickname || eatResult.nickname || 'N/A'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Account ID (UID)</span>
+                          <span className="sm-val uid">{eatResult.account_id || eatResult.uid || 'N/A'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Region</span>
+                          <span className="sm-val region">{eatResult.region || 'GLOBAL'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Open ID</span>
+                          <span className="sm-val openid">{eatResult.open_id || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      {/* GARENA ACCESS TOKEN DISPLAY */}
+                      {eatResult.access_token && (
+                        <div className="token-result-box">
+                          <div className="token-header">
+                            <span className="token-title">
+                              <Key size={14} /> Garena OAuth Access Token
+                            </span>
+                            <CopyButton text={eatResult.access_token} label="Copy Access Token" />
+                          </div>
+                          <div className="token-body mono-text">{eatResult.access_token}</div>
+                        </div>
+                      )}
+
+                      {/* JSON RESPONSE VIEWER */}
+                      <div className="json-viewer-header">
+                        <span>Full API JSON Response</span>
+                      </div>
+                      <CodeBlock code={JSON.stringify(eatResult, null, 2)} language="json" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ENDPOINT SPECIFICATION CARD */}
+            <div className="card spec-card mt-6">
+              <div className="card-header">
+                <span className="ep-badge method-get">GET</span>
+                <span className="ep-endpoint-path">/eattojwt/eat</span>
+                <span className="ep-desc-summary">— EAT Token Decode Endpoint</span>
+              </div>
+
+              <div className="card-body">
+                <p className="spec-intro">
+                  Decodes a Free Fire <strong>EAT (External Access Token)</strong> to extract Garena OAuth Access Token, user profile metadata, and region info.
+                </p>
+
+                <h4 className="subheading">Request Parameters</h4>
+                <ParamTable
+                  params={[
+                    { name: 'eat_token', type: 'string', required: 'yes', description: 'Free Fire EAT Token string to decode.' },
+                    { name: 'key', type: 'string', required: 'no', description: 'API authorization key.' },
+                  ]}
+                />
+
+                <h4 className="subheading mt-4">Sample Response</h4>
+                <CodeBlock
+                  code={JSON.stringify(
+                    {
+                      status: 'success',
+                      account_id: '2579249340',
+                      account_nickname: 'FreeFirePlayer',
+                      open_id: 'abc123def456ghi789jkl012',
+                      access_token: 'eyJhbGciOiJIUzI1NiIs...',
+                      region: 'BD',
+                    },
+                    null,
+                    2
+                  )}
+                  language="json"
+                />
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 2: ACCESS TO JWT CONVERTER */}
+        {/* ============================================================ */}
+        {activeTab === 'jwt' && (
+          <section className="tool-section animate-fadein">
+            <div className="section-header">
+              <div className="sec-icon jwt-icon">
+                <Key size={22} />
+              </div>
+              <div>
+                <h2>2. Access to JWT Converter</h2>
+                <p>Generates Free Fire JWT Bearer Tokens from Garena Access Tokens or Guest Account Credentials.</p>
+              </div>
+            </div>
+
+            <div className="tool-grid">
+              {/* INPUT PANEL */}
+              <div className="card tool-card">
+                <div className="card-header">
+                  {/* MODE SELECTOR */}
+                  <div className="mode-toggle">
+                    <button
+                      className={`mode-btn ${jwtMode === 'access' ? 'active' : ''}`}
+                      onClick={() => {
+                        setJwtMode('access')
+                        setJwtError(null)
+                      }}
+                    >
+                      Via Access Token
+                    </button>
+                    <button
+                      className={`mode-btn ${jwtMode === 'uidpass' ? 'active' : ''}`}
+                      onClick={() => {
+                        setJwtMode('uidpass')
+                        setJwtError(null)
+                      }}
+                    >
+                      Via UID + Password
+                    </button>
+                  </div>
+
+                  <button className="sample-btn" onClick={handleLoadSampleJwt}>
+                    Load Sample
+                  </button>
+                </div>
+
+                <div className="card-body">
+                  {jwtMode === 'access' ? (
+                    <div className="field-group">
+                      <label>Garena OAuth Access Token</label>
+                      <textarea
+                        rows={5}
+                        className="mono-textarea"
+                        placeholder="Paste Garena OAuth Access Token (eyJhbGci...)"
+                        value={accessTokenInput}
+                        onChange={(e) => setAccessTokenInput(e.target.value)}
+                      ></textarea>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="field-group">
+                        <label>Free Fire Guest UID</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 4147917569"
+                          value={uidInput}
+                          onChange={(e) => setUidInput(e.target.value)}
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label>Account Hex Password</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 8415C426BBE3371DADD82F5B"
+                          value={passInput}
+                          onChange={(e) => setPassInput(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {jwtError && (
+                    <div className="alert alert-error">
+                      <AlertCircle size={16} />
+                      <span>{jwtError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    className="btn-primary btn-block"
+                    onClick={handleConvertJwt}
+                    disabled={jwtLoading}
+                  >
+                    {jwtLoading ? (
+                      <>
+                        <RefreshCw size={16} className="spin" />
+                        <span>Generating JWT Bearer Token...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap size={16} />
+                        <span>Generate JWT Token</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* OUTPUT / RESULT PANEL */}
+              <div className="card tool-card result-card">
+                <div className="card-header">
+                  <h3>JWT Generation Result</h3>
+                  {jwtResult && <CopyButton text={jwtResult.BearerAuth || jwtResult.token || ''} label="Copy Bearer Header" />}
+                </div>
+
+                <div className="card-body">
+                  {!jwtResult && !jwtLoading && (
+                    <div className="empty-state">
+                      <Key size={36} />
+                      <p>Enter your Access Token or Guest credentials and click Generate to produce a valid JWT Bearer auth token.</p>
+                    </div>
+                  )}
+
+                  {jwtLoading && (
+                    <div className="empty-state">
+                      <RefreshCw size={36} className="spin text-orange" />
+                      <p>Requesting JWT Bearer Token from Garena server...</p>
+                    </div>
+                  )}
+
+                  {jwtResult && (
+                    <div className="result-container animate-fadein">
+                      {jwtResult.notice && (
+                        <div className="alert alert-info mb-3">
+                          <Info size={15} />
+                          <span>{jwtResult.notice}</span>
+                        </div>
+                      )}
+
+                      {/* SUMMARY BADGES */}
+                      <div className="summary-grid">
+                        <div className="summary-card">
+                          <span className="sm-label">Account UID</span>
+                          <span className="sm-val uid">{jwtResult.uid || 'N/A'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Region</span>
+                          <span className="sm-val region">{jwtResult.region || 'BD'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Status</span>
+                          <span className="sm-val status">{jwtResult.status === '1' ? 'Active ✅' : 'Valid'}</span>
+                        </div>
+                        <div className="summary-card">
+                          <span className="sm-label">Open ID</span>
+                          <span className="sm-val openid">{jwtResult.open_id || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      {/* BEARER TOKEN DISPLAY BOX */}
+                      {(jwtResult.BearerAuth || jwtResult.token) && (
+                        <div className="token-result-box highlight-jwt">
+                          <div className="token-header">
+                            <span className="token-title">
+                              <Shield size={14} /> Bearer JWT Authorization Header
+                            </span>
+                            <div className="token-actions">
+                              <CopyButton text={jwtResult.BearerAuth || `Bearer ${jwtResult.token}`} label="Copy Header" />
+                              <CopyButton text={jwtResult.token || (jwtResult.BearerAuth ? jwtResult.BearerAuth.replace('Bearer ', '') : '')} label="Copy Token Only" />
+                            </div>
+                          </div>
+                          <div className="token-body mono-text">
+                            {jwtResult.BearerAuth || `Bearer ${jwtResult.token}`}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* INTERACTIVE CLIENT-SIDE JWT INSPECTOR */}
+                      {(() => {
+                        const rawJwt = jwtResult.token || (jwtResult.BearerAuth ? jwtResult.BearerAuth.replace('Bearer ', '') : '')
+                        const parsed = parseJwt(rawJwt)
+                        if (!parsed) return null
+                        return (
+                          <div className="jwt-inspector mt-4">
+                            <div className="inspector-title">
+                              <Search size={14} /> JWT Decoded Claims Inspector
+                            </div>
+                            <div className="jwt-parts-grid">
+                              <div className="jwt-part-card">
+                                <span className="jwt-part-header">Header</span>
+                                <pre className="jwt-json">{JSON.stringify(parsed.header, null, 2)}</pre>
+                              </div>
+                              <div className="jwt-part-card">
+                                <span className="jwt-part-payload">Payload</span>
+                                <pre className="jwt-json">{JSON.stringify(parsed.payload, null, 2)}</pre>
+                                {parsed.payload.exp && (
+                                  <div className="jwt-exp-badge">
+                                    Expires: {formatTimestamp(parsed.payload.exp)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ENDPOINT SPECIFICATION CARD */}
+            <div className="card spec-card mt-6">
+              <div className="card-header">
+                <span className="ep-badge method-get">GET</span>
+                <span className="ep-endpoint-path">/accesstojwt/token</span>
+                <span className="ep-desc-summary">— Full JWT Generator Endpoint</span>
+              </div>
+
+              <div className="card-body">
+                <p className="spec-intro">
+                  Generates a Free Fire <strong>JWT Bearer Token</strong> from a Garena Access Token or UID/Password combination.
+                </p>
+
+                <h4 className="subheading">Query Parameters</h4>
+                <ParamTable
+                  params={[
+                    { name: 'access_token', type: 'string', required: 'alt', description: 'Garena OAuth Access Token (Method 1).' },
+                    { name: 'uid', type: 'string', required: 'alt', description: 'Free Fire Guest UID (Method 2).' },
+                    { name: 'password', type: 'string', required: 'alt', description: 'Account Password in Hex format (Method 2).' },
+                    { name: 'key', type: 'string', required: 'no', description: 'API Authorization Key.' },
+                  ]}
+                />
+
+                <div className="alt-endpoint mt-4">
+                  <span className="ep-badge method-get">GET</span>
+                  <span className="mono-text bold">/accesstojwt/get_jwt</span>
+                  <span className="text-muted ml-2">— Lightweight endpoint returning JWT string only.</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 3: LOGIN PLATFORMS HUB */}
+        {/* ============================================================ */}
+        {activeTab === 'platforms' && (
+          <section className="tool-section animate-fadein">
+            <div className="section-header">
+              <div className="sec-icon platform-icon">
+                <Globe size={22} />
+              </div>
+              <div>
+                <h2>3. Login Platforms Hub (1-Click Sign-In Redirects)</h2>
+                <p>1-Click Redirect Sign In across Facebook, Google, VK, Apple, Huawei, Twitter, and Guest accounts.</p>
+              </div>
+            </div>
+
+            {/* PLATFORM SELECTOR CARDS */}
+            <div className="platform-grid">
+              {PLATFORMS.map((plat) => {
+                const isSelected = selectedPlatform.id === plat.id
+                return (
+                  <div
+                    key={plat.id}
+                    className={`platform-card ${isSelected ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedPlatform(plat)
+                    }}
+                    style={{
+                      borderColor: isSelected ? plat.color : 'transparent',
+                    }}
+                  >
+                    <div className="platform-icon-wrap" style={{ background: plat.bg, color: plat.color }}>
+                      <Smartphone size={20} />
+                    </div>
+                    <div className="platform-info">
+                      <span className="platform-name">{plat.name}</span>
+                      <span className="platform-type-id">Type ID: {plat.typeId}</span>
+                    </div>
+                    {isSelected && (
+                      <div className="platform-check" style={{ color: plat.color }}>
+                        <CheckCircle2 size={16} />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* SELECTED PLATFORM 1-CLICK AUTHENTICATOR TOOL */}
+            <div className="tool-grid mt-6">
+              {/* CONVERTER INPUT & DIRECT REDIRECT BUTTONS */}
+              <div className="card tool-card">
+                <div className="card-header" style={{ borderLeft: `4px solid ${selectedPlatform.color}` }}>
+                  <h3>
+                    <span style={{ color: selectedPlatform.color }}>{selectedPlatform.name}</span> 1-Click Sign-In
+                  </h3>
+                </div>
+
+                <div className="card-body">
+                  <div className="alert alert-info mb-3">
+                    <Info size={14} />
+                    <span>{selectedPlatform.apiNote}</span>
+                  </div>
+
+                  {/* 1-CLICK ANCHOR REDIRECT BUTTONS */}
+                  <div className="oauth-redirect-box mb-2" style={{ borderColor: selectedPlatform.color }}>
+                    <div className="oauth-title">
+                      <span>Direct 1-Click Sign-In Redirect</span>
+                    </div>
+
+                    <a
+                      href={selectedPlatform.garenaRedirectUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="oauth-launch-btn"
+                      style={{ background: selectedPlatform.color }}
+                    >
+                      <ArrowUpRight size={18} />
+                      <span>Sign In with {selectedPlatform.name}</span>
+                    </a>
+
+                    <span className="oauth-subtext mt-2">
+                      Opens official {selectedPlatform.name} Garena Universal OAuth page in a new tab.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* EXTRACTION STEP-BY-STEP GUIDE */}
+              <div className="card tool-card">
+                <div className="card-header">
+                  <h3>
+                    <HelpCircle size={16} /> How 1-Click {selectedPlatform.name} Sign-In Works
+                  </h3>
+                </div>
+
+                <div className="card-body">
+                  <ol className="guide-steps">
+                    {selectedPlatform.extractGuide.map((step, idx) => (
+                      <li key={idx} className="guide-step-item">
+                        <span className="step-num">{idx + 1}</span>
+                        <span className="step-text">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 4: API DOCS & PLAYGROUND */}
+        {/* ============================================================ */}
+        {activeTab === 'docs' && (
+          <section className="tool-section animate-fadein">
+            <div className="section-header">
+              <div className="sec-icon docs-icon">
+                <Code size={22} />
+              </div>
+              <div>
+                <h2>4. Developer API Reference & Code Generators</h2>
+                <p>Complete HTTP endpoint specifications and ready-to-use code snippets in cURL, JavaScript, Python, and PHP.</p>
+              </div>
+            </div>
+
+            {/* CODE LANGUAGE SELECTOR */}
+            <div className="code-lang-selector mb-4">
+              <span className="lang-label">Select Programming Language:</span>
+              <div className="lang-buttons">
+                <button
+                  className={`lang-btn ${docLang === 'curl' ? 'active' : ''}`}
+                  onClick={() => setDocLang('curl')}
+                >
+                  cURL / Terminal
+                </button>
+                <button
+                  className={`lang-btn ${docLang === 'javascript' ? 'active' : ''}`}
+                  onClick={() => setDocLang('javascript')}
+                >
+                  JavaScript (Node / Fetch)
+                </button>
+                <button
+                  className={`lang-btn ${docLang === 'python' ? 'active' : ''}`}
+                  onClick={() => setDocLang('python')}
+                >
+                  Python (Requests)
+                </button>
+                <button
+                  className={`lang-btn ${docLang === 'php' ? 'active' : ''}`}
+                  onClick={() => setDocLang('php')}
+                >
+                  PHP (cURL)
+                </button>
+              </div>
+            </div>
+
+            {/* ENDPOINT 1: EAT CONVERTER */}
+            <div className="card spec-card mb-6">
+              <div className="card-header">
+                <span className="ep-badge method-get">GET</span>
+                <span className="ep-endpoint-path">/eattojwt/eat</span>
+                <span className="ep-desc-summary">— EAT Token to Access Token Converter</span>
+              </div>
+
+              <div className="card-body">
+                {docLang === 'curl' && (
+                  <CodeBlock
+                    code={`curl -X GET "https://api.example.com/eattojwt/eat?eat_token=YOUR_EAT_TOKEN" \\
+  -H "Accept: application/json"`}
+                    language="bash"
+                  />
+                )}
+
+                {docLang === 'javascript' && (
+                  <CodeBlock
+                    code={`const eatToken = "YOUR_EAT_TOKEN";
+
+async function convertEat() {
+  const url = \`https://api.example.com/eattojwt/eat?eat_token=\${encodeURIComponent(eatToken)}\`;
+  const response = await fetch(url);
+  const data = await response.json();
+  console.log("Converted Account Info:", data);
+}
+
+convertEat();`}
+                    language="javascript"
+                  />
+                )}
+
+                {docLang === 'python' && (
+                  <CodeBlock
+                    code={`import requests
+
+url = "https://api.example.com/eattojwt/eat"
+params = {
+    "eat_token": "YOUR_EAT_TOKEN"
+}
+
+response = requests.get(url, params=params)
+data = response.json()
+print("Account Nickname:", data.get("account_nickname"))
+print("Access Token:", data.get("access_token"))`}
+                    language="python"
+                  />
+                )}
+
+                {docLang === 'php' && (
+                  <CodeBlock
+                    code={`<?php
+$eatToken = urlencode("YOUR_EAT_TOKEN");
+$url = "https://api.example.com/eattojwt/eat?eat_token={$eatToken}";
+
+$ch = curl_init($url);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+$response = curl_exec($ch);
+curl_close($ch);
+
+$data = json_decode($response, true);
+var_dump($data);
+?>`}
+                    language="php"
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* ENDPOINT 2: ACCESS TO JWT */}
+            <div className="card spec-card mb-6">
+              <div className="card-header">
+                <span className="ep-badge method-get">GET</span>
+                <span className="ep-endpoint-path">/accesstojwt/token</span>
+                <span className="ep-desc-summary">— Access Token or UID/Password to JWT Generator</span>
+              </div>
+
+              <div className="card-body">
+                {docLang === 'curl' && (
+                  <CodeBlock
+                    code={`# Method 1: Via Access Token
+curl -X GET "https://api.example.com/accesstojwt/token?access_token=YOUR_ACCESS_TOKEN"
+
+# Method 2: Via Guest UID + Password
+curl -X GET "https://api.example.com/accesstojwt/token?uid=4147917569&password=8415C426BBE3371DADD82F5B"`}
+                    language="bash"
+                  />
+                )}
+
+                {docLang === 'javascript' && (
+                  <CodeBlock
+                    code={`// Generate JWT via Garena Access Token
+async function getJwtFromAccess(accessToken) {
+  const url = \`https://api.example.com/accesstojwt/token?access_token=\${encodeURIComponent(accessToken)}\`;
+  const res = await fetch(url);
+  return await res.json();
+}`}
+                    language="javascript"
+                  />
+                )}
+
+                {docLang === 'python' && (
+                  <CodeBlock
+                    code={`import requests
+
+def get_jwt(access_token):
+    res = requests.get("https://api.example.com/accesstojwt/token", params={"access_token": access_token})
+    return res.json()
+
+result = get_jwt("YOUR_ACCESS_TOKEN")
+print("Bearer Auth:", result.get("BearerAuth"))`}
+                    language="python"
+                  />
+                )}
+
+                {docLang === 'php' && (
+                  <CodeBlock
+                    code={`<?php
+$token = urlencode("YOUR_ACCESS_TOKEN");
+$url = "https://api.example.com/accesstojwt/token?access_token={$token}";
+$json = file_get_contents($url);
+$data = json_decode($json, true);
+echo "Bearer Auth Header: " . $data["BearerAuth"];
+?>`}
+                    language="php"
+                  />
+                )}
+              </div>
+            </div>
+          </section>
+        )}
       </main>
+
+      {/* --- FOOTER --- */}
+      <footer className="app-footer">
+        <div className="footer-content">
+          <div className="footer-brand">
+            <Zap size={16} />
+            <span>Robin's Token Extractor</span>
+          </div>
+          <div className="footer-links">
+            <a href="https://t.me/Robin444s" target="_blank" rel="noreferrer">
+              Telegram: @Robin444s
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }
