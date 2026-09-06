@@ -1193,25 +1193,24 @@ body {
   .topbar-nav {
     width: 100%;
     order: 3;
-    overflow-x: auto;
-    white-space: nowrap;
-    display: flex;
-    gap: 4px;
-    padding: 4px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 6px;
     background: rgba(17, 24, 39, 0.95);
-  }
-
-  .topbar-nav::-webkit-scrollbar {
-    display: none;
+    border-radius: 12px;
   }
 
   .nav-item {
-    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     font-size: 12px;
-    padding: 7px 12px;
-    white-space: nowrap;
+    padding: 9px 8px;
+    width: 100%;
+    text-align: center;
+    border-radius: 8px;
   }
 
   .hero-section {
