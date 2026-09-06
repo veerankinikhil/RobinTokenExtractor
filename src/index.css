@@ -1154,3 +1154,160 @@ body {
   margin-left: 4px;
 }
 
+/* MOBILE RESPONSIVE STYLES */
+@media (max-width: 850px) {
+  :root {
+    --topbar-h: auto;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    height: auto;
+    padding: 10px 14px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    z-index: 100;
+  }
+
+  .topbar-brand {
+    gap: 8px;
+  }
+
+  .topbar-logo {
+    width: 32px;
+    height: 32px;
+  }
+
+  .topbar-name {
+    font-size: 15px;
+  }
+
+  .topbar-actions {
+    margin-left: auto;
+  }
+
+  .topbar-nav {
+    width: 100%;
+    order: 3;
+    overflow-x: auto;
+    white-space: nowrap;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    background: rgba(17, 24, 39, 0.95);
+  }
+
+  .topbar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    font-size: 12px;
+    padding: 7px 12px;
+    white-space: nowrap;
+  }
+
+  .hero-section {
+    padding: 24px 16px;
+  }
+
+  .hero-title {
+    font-size: 22px;
+    line-height: 1.35;
+  }
+
+  .hero-subtitle {
+    font-size: 13px;
+  }
+
+  .hero-stats {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .stat-divider {
+    display: none;
+  }
+
+  .main-content {
+    padding: 16px 12px;
+  }
+
+  .tool-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .platform-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .code-lang-selector {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .lang-buttons {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .lang-btn {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    padding: 8px 10px;
+  }
+
+  .topbar-name {
+    font-size: 14px;
+  }
+
+  .topbar-ver {
+    font-size: 9px;
+    padding: 1px 4px;
+  }
+
+  .telegram-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  .nav-item {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .platform-card {
+    padding: 10px;
+  }
+
+  .platform-name {
+    font-size: 12px;
+  }
+
+  .platform-type-id {
+    font-size: 10px;
+  }
+}
+
